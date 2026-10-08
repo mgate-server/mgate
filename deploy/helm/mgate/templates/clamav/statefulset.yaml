@@ -1,0 +1,100 @@
+{{- if .Values.clamav.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mgate.fullname" . }}-clamav
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "clamav") | nindent 4 }}
+spec:
+  serviceName: clamav
+  replicas: 1 # antivirus scanner; local DB PVC is RWO, no reason to run more than one
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" . "component" "clamav") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "clamav") | nindent 8 }}
+      {{- with .Values.clamav.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      # The official clamav/clamav entrypoint starts as root (chowns /var/lib/clamav + /run/clamav)
+      # then setuid/setgid's to the `clamav` user itself — `runAsNonRoot: true` from
+      # global.podSecurityContext would make the kubelet refuse to start this container; see
+      # templates/postfix/statefulset.yaml for the same fix applied to the mail images.
+      securityContext:
+        {{- include "mgate.podSecurityContext" (dict "root" . "override" (dict "runAsNonRoot" false)) | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "mgate.dnsConfig" . | nindent 6 }}
+      containers:
+        - name: clamav
+          image: {{ include "mgate.thirdPartyImage" .Values.clamav.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # Directives patched into clamd.conf/freshclam.conf by the image's own entrypoint
+          # (docker/clamav/README.md) — mirrors docker-compose.yml's clamav service exactly. Sizes
+          # must track MGATE_MESSAGE_SIZE_LIMIT (ClamAV units are M/G, not bytes) —
+          # TODO(S1): derive them from .Values.config.messageSizeLimit instead of hardcoding, same
+          # TODO as compose.
+          env:
+            - { name: TZ, value: {{ .Values.config.timezone | quote }} }
+            - { name: CLAMD_CONF_StreamMaxLength, value: "50M" }
+            - { name: CLAMD_CONF_MaxFileSize, value: "50M" }
+            - { name: CLAMD_CONF_MaxScanSize, value: "150M" }
+            - { name: CLAMD_CONF_MaxThreads, value: "4" }
+            - { name: CLAMD_CONF_LogTime, value: "yes" }
+            - { name: CLAMD_CONF_LogVerbose, value: "no" }
+            - { name: FRESHCLAM_CONF_Checks, value: "12" }
+            # Rspamd talks INSTREAM to clamd on 3310; clamav-milter is unused (same as compose).
+            - { name: CLAMAV_NO_MILTERD, value: "true" }
+          ports:
+            - { name: clamd, containerPort: 3310, protocol: TCP }
+          # freshclam's first virus-DB download can take several minutes; keep the initial delay
+          # generous so Kubernetes does not restart-loop the container during that window.
+          livenessProbe:
+            tcpSocket: { port: clamd }
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket: { port: clamd }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          securityContext:
+            # Mirrors compose `cap_add` for clamav exactly.
+            {{- include "mgate.securityContext" (dict "root" . "override" (dict "capabilities" (dict "drop" (list "ALL") "add" (list "CHOWN" "DAC_OVERRIDE" "FOWNER" "SETUID" "SETGID")))) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.clamav.resources | nindent 12 }}
+          {{- if .Values.clamav.persistence.enabled }}
+          volumeMounts:
+            - { name: db, mountPath: /var/lib/clamav }
+          {{- end }}
+      {{- with .Values.clamav.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.clamav.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.clamav.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.clamav.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: db
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if or .Values.clamav.persistence.storageClass .Values.global.storageClass }}
+        storageClassName: {{ .Values.clamav.persistence.storageClass | default .Values.global.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.clamav.persistence.size }}
+  {{- end }}
+{{- end }}

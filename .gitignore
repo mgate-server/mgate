@@ -1,0 +1,40 @@
+# Local environment / secrets
+.env
+.env.local
+*.env.bak
+.env.*
+!.env.example
+
+# Local operator overrides (the Makefile auto-loads it when present)
+docker-compose.override.yml
+
+# Keys, certificates and ACME state must never be committed
+*.pem
+*.key
+acme.json
+
+# Node / web
+web/**/node_modules
+web/**/dist
+web/**/.vite
+web/**/coverage
+npm-debug.log*
+
+# Runtime data created by compose (bind mounts)
+/backups/
+/certs-dev/
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Generated docs / reports
+/tests/**/reports/
+*.log
+
+# Python (tests/e2e, tests/load, tests/deliverability)
+__pycache__/
+*.pyc

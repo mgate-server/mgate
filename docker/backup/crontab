@@ -1,0 +1,4 @@
+# supercronic crontab template — ${BACKUP_SCHEDULE} is substituted by entrypoint.sh at container
+# start (default 0 3 * * * — see .env.example). Standard 5-field cron syntax (supercronic does
+# not support seconds or the `@daily`-style shorthands some other cron implementations accept).
+${BACKUP_SCHEDULE} /usr/local/bin/backup.sh >> /proc/1/fd/1 2>> /proc/1/fd/2

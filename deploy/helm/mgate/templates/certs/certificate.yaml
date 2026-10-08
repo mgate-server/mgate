@@ -1,0 +1,23 @@
+{{- if eq .Values.certs.mode "cert-manager" }}
+# Requires the cert-manager CRDs + a running cert-manager controller, and an Issuer/ClusterIssuer
+# already configured (see values.yaml certs.certManager.issuerRef) — this chart does not install
+# cert-manager itself. TODO(S8): only the primary MGATE_HOSTNAME cert is covered here; additional
+# per-domain custom certs still go through the backend's own ACME flow when certs.mode=mgate.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "mgate.fullname" . }}-tls
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "") | nindent 4 }}
+spec:
+  secretName: {{ include "mgate.fullname" . }}-tls
+  dnsNames:
+    - {{ .Values.config.hostname | quote }}
+    {{- range .Values.ingress.extraHosts }}
+    - {{ . | quote }}
+    {{- end }}
+  issuerRef:
+    name: {{ .Values.certs.certManager.issuerRef.name | required "certs.certManager.issuerRef.name is required when certs.mode=cert-manager" }}
+    kind: {{ .Values.certs.certManager.issuerRef.kind }}
+{{- end }}

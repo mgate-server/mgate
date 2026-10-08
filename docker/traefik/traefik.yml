@@ -1,0 +1,49 @@
+# Static Traefik configuration. Baked into the image at /etc/traefik/traefik.yml.
+# Routing itself (HTTP->HTTPS redirect except /.well-known/acme-challenge/, Host-based routing,
+# TLS options) lives in dynamic/00-routes.yml, NOT here — the redirect needs a path exception
+# that only the dynamic (router/middleware) layer can express; the static entryPoints below stay
+# plain listeners.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+# No dashboard, no docker provider — MGate does
+# not want Traefik to need the Docker socket at all.
+api:
+  dashboard: false
+  insecure: false
+
+# Backs the `traefik healthcheck` CLI probe used by docker-compose.yml's healthcheck.
+ping:
+  entryPoint: web
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      # Reject requests carrying a header whose name aliases a header Traefik manages (e.g.
+      # X_Auth_User for X-Auth-User) instead of forwarding it as-is — prevents a client from
+      # spoofing headers the backend trusts from Traefik.
+      aliasHeadersStrategy: reject
+  websecure:
+    address: ":443"
+    http:
+      aliasHeadersStrategy: reject
+      tls: {} # actual cert selection happens per-router in the dynamic config (SNI + stores)
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+  # Deliberately no `docker:` provider — MGate does not mount the Docker socket into Traefik;
+  # all routing is declared explicitly in dynamic/00-routes.yml (rationale:
+  # smaller attack surface, no implicit route from an unrelated container's labels).
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
+  bufferingSize: 0

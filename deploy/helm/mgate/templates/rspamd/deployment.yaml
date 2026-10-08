@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mgate.fullname" . }}-rspamd
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "rspamd") | nindent 4 }}
+spec:
+  replicas: {{ .Values.rspamd.replicaCount }}
+  {{- if .Values.rspamd.persistence.enabled }}
+  strategy:
+    type: Recreate # a PVC-backed single replica cannot do a RollingUpdate (would need 2 mounts at once)
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" . "component" "rspamd") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "rspamd") | nindent 8 }}
+      {{- with .Values.rspamd.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "mgate.dnsConfig" . | nindent 6 }}
+      containers:
+        - name: rspamd
+          image: {{ include "mgate.image" (dict "root" . "repository" .Values.rspamd.image.repository "tag" .Values.rspamd.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "mgate.configMapName" . }}
+            - secretRef:
+                name: {{ include "mgate.secretsName" . }}
+          # Rspamd only exposes RSPAMD_-prefixed env vars to its own config templates
+          # ({= env.X =} reads RSPAMD_X, see docs/mail/rspamd.md and docker/rspamd/local.d/*) — the
+          # generic MGATE_*/POSTGRES_* names above (envFrom) are invisible to it. This block mirrors
+          # docker-compose.yml's rspamd service exactly; it was entirely missing before (rspamd would
+          # have refused to start: RSPAMD_CONTROLLER_PASSWORD/RSPAMD_INTERNAL_TOKEN are mandatory,
+          # per docker/rspamd/local.d/worker-controller.inc + metadata_exporter.conf).
+          env:
+            - { name: TZ, value: {{ .Values.config.timezone | quote }} }
+            - name: RSPAMD_CONTROLLER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mgate.secretsName" . }}
+                  key: RSPAMD_CONTROLLER_PASSWORD
+            - name: RSPAMD_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mgate.secretsName" . }}
+                  key: MGATE_INTERNAL_TOKEN
+            - { name: RSPAMD_REDIS_HOST, value: {{ include "mgate.valkeyHost" . | quote }} }
+            - { name: RSPAMD_REDIS_PORT, value: {{ include "mgate.valkeyPort" . | quote }} }
+            - name: RSPAMD_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.valkey.enabled }}
+                  name: {{ include "mgate.secretsName" . }}
+                  key: VALKEY_PASSWORD
+                  {{- else }}
+                  name: {{ .Values.externalValkey.existingSecret }}
+                  key: {{ .Values.externalValkey.existingSecretPasswordKey }}
+                  {{- end }}
+            - { name: RSPAMD_REDIS_DB, value: "1" } # db 1 = rspamd, db 0 = mgate
+            # `| int` before `quote`: see the identical comment in templates/configmap.yaml (the
+            # scientific-notation-via-float64 gotcha).
+            - { name: RSPAMD_MESSAGE_SIZE_LIMIT, value: {{ .Values.config.messageSizeLimit | int | quote }} }
+            {{- if .Values.clamav.enabled }}
+            - { name: RSPAMD_CLAMAV_SERVERS, value: "clamav:3310" }
+            {{- end }}
+            - { name: RSPAMD_EVENTS_URL, value: "http://api:8081/internal/v1/events/rspamd" }
+          ports:
+            - { name: milter, containerPort: 11332, protocol: TCP }
+            - { name: normal, containerPort: 11333, protocol: TCP }
+            - { name: controller, containerPort: 11334, protocol: TCP }
+          livenessProbe:
+            httpGet: { path: /ping, port: controller }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /ping, port: controller }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            {{- include "mgate.securityContext" (dict "root" .) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.rspamd.resources | nindent 12 }}
+          {{- if .Values.rspamd.persistence.enabled }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/rspamd }
+          {{- end }}
+      {{- if .Values.rspamd.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "mgate.fullname" . }}-rspamd-data
+      {{- end }}
+      {{- with .Values.rspamd.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.rspamd.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.rspamd.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if .Values.rspamd.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mgate.fullname" . }}-rspamd-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "rspamd") | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if or .Values.rspamd.persistence.storageClass .Values.global.storageClass }}
+  storageClassName: {{ .Values.rspamd.persistence.storageClass | default .Values.global.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.rspamd.persistence.size }}
+{{- end }}

@@ -1,0 +1,110 @@
+/*
+ * Design tokens for @mgate/ui, imported once by apps/spa/src/main.css alongside
+ * `@import "tailwindcss";`. Semantic tokens live as CSS custom properties (`--mg-*`) so a
+ * single dark-mode switch (`[data-theme="dark"]` on <html>, falling back to
+ * `prefers-color-scheme` when no explicit choice was made) repaints everything; the
+ * `@theme` block below re-exposes them as Tailwind v4 utilities (`bg-mg-surface`, etc.).
+ * TODO(S4): extend with a brand accent per white-label deployment once that decision lands.
+ */
+
+:root {
+  --mg-bg: #f8fafc;
+  --mg-surface: #ffffff;
+  --mg-surface-raised: #ffffff;
+  --mg-surface-subtle: #f1f5f9;
+  --mg-border: #e2e8f0;
+  --mg-border-subtle: #f1f5f9;
+  --mg-text: #0f172a;
+  --mg-text-muted: #64748b;
+  --mg-primary: #4f46e5;
+  --mg-primary-hover: #4338ca;
+  --mg-primary-fg: #ffffff;
+  --mg-danger: #ef4444;
+  --mg-danger-fg: #ffffff;
+  --mg-warning: #f59e0b;
+  --mg-warning-fg: #1c1917;
+  --mg-success: #10b981;
+  --mg-success-fg: #ffffff;
+  --mg-focus-ring: #6366f1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --mg-bg: #090d16;
+    --mg-surface: #0f172a;
+    --mg-surface-raised: #1e293b;
+    --mg-surface-subtle: #141e33;
+    --mg-border: #1e293b;
+    --mg-border-subtle: #172033;
+    --mg-text: #f8fafc;
+    --mg-text-muted: #94a3b8;
+    --mg-primary: #6366f1;
+    --mg-primary-hover: #818cf8;
+    --mg-primary-fg: #ffffff;
+    --mg-danger: #f87171;
+    --mg-danger-fg: #ffffff;
+    --mg-warning: #fbbf24;
+    --mg-warning-fg: #1c1917;
+    --mg-success: #34d399;
+    --mg-success-fg: #ffffff;
+    --mg-focus-ring: #818cf8;
+  }
+}
+
+:root[data-theme='dark'] {
+  --mg-bg: #090d16;
+  --mg-surface: #0f172a;
+  --mg-surface-raised: #1e293b;
+  --mg-surface-subtle: #141e33;
+  --mg-border: #1e293b;
+  --mg-border-subtle: #172033;
+  --mg-text: #f8fafc;
+  --mg-text-muted: #94a3b8;
+  --mg-primary: #6366f1;
+  --mg-primary-hover: #818cf8;
+  --mg-primary-fg: #ffffff;
+  --mg-danger: #f87171;
+  --mg-danger-fg: #ffffff;
+  --mg-warning: #fbbf24;
+  --mg-warning-fg: #1c1917;
+  --mg-success: #34d399;
+  --mg-success-fg: #ffffff;
+  --mg-focus-ring: #818cf8;
+}
+
+@theme {
+  --color-mg-bg: var(--mg-bg);
+  --color-mg-surface: var(--mg-surface);
+  --color-mg-surface-raised: var(--mg-surface-raised);
+  --color-mg-surface-subtle: var(--mg-surface-subtle);
+  --color-mg-border: var(--mg-border);
+  --color-mg-border-subtle: var(--mg-border-subtle);
+  --color-mg-text: var(--mg-text);
+  --color-mg-text-muted: var(--mg-text-muted);
+  --color-mg-primary: var(--mg-primary);
+  --color-mg-primary-hover: var(--mg-primary-hover);
+  --color-mg-primary-fg: var(--mg-primary-fg);
+  --color-mg-danger: var(--mg-danger);
+  --color-mg-danger-fg: var(--mg-danger-fg);
+  --color-mg-warning: var(--mg-warning);
+  --color-mg-warning-fg: var(--mg-warning-fg);
+  --color-mg-success: var(--mg-success);
+  --color-mg-success-fg: var(--mg-success-fg);
+  --color-mg-focus-ring: var(--mg-focus-ring);
+}
+
+/* Sleek custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--mg-border);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mg-text-muted);
+}

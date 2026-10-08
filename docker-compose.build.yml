@@ -1,0 +1,91 @@
+# MGate — build overlay: adds `build:` to every image OWNED BY THIS REPO so the stack can be
+# built from source instead of pulled from MGATE_REGISTRY.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.build.yml build
+#        docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+# (the Makefile's `$(COMPOSE_BUILD)` / `make build` wraps this.)
+#
+# This file builds ONLY public-repo images: web, postfix, dovecot, rspamd, unbound, traefik,
+# backup, firewall. It never builds `api`/`webmail`/`worker`/`migrate` —
+# the backend service source is not distributed; those four resolve to the same closed
+# `${MGATE_IMAGE}` from docker-compose.yml and are always pulled, even under this overlay. A
+# backend developer who needs a locally-built backend image points `MGATE_IMAGE` at it (and, for
+# the mail images below, `MGATE_AGENT_IMAGE` at a locally-built agent image) instead of adding a
+# `build:` block here.
+#
+# All contexts are the repo root (`.`) so Dockerfiles can COPY from web/ regardless of which
+# service they build. BuildKit must be enabled (DOCKER_BUILDKIT=1 / COMPOSE_DOCKER_CLI_BUILD=1 —
+# the Makefile exports both); postfix/dovecot/firewall use it for the named-image
+# `COPY --from=${MGATE_AGENT_IMAGE}` that pulls the mgate-agent binary out of its own image
+# instead of compiling it.
+#
+# Every built service receives the MGATE_VERSION build arg (one CalVer version for the whole
+# product, e.g. 2026.10.1): it lands in the OCI label `org.opencontainers.image.version` and, for
+# `web`, in the SPA build (VITE_APP_VERSION). The value is taken from MGATE_VERSION (the same variable
+# that selects the pulled backend image tag), so a local `make build` with `MGATE_VERSION=latest`
+# from .env labels the images `latest`; the `dev` fallback applies only when it is unset. That is
+# harmless (the SPA treats non-CalVer values as "no update check"), and release builds always pass
+# the exact CalVer version.
+x-version-build-args: &version-build-args
+  MGATE_VERSION: ${MGATE_VERSION:-dev}
+
+x-agent-build-args: &agent-build-args
+  MGATE_AGENT_IMAGE: ${MGATE_AGENT_IMAGE:-${MGATE_REGISTRY:-ghcr.io/mgate-server}/mgate-agent:${MGATE_VERSION:-latest}}
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: docker/web/Dockerfile
+      args:
+        <<: *version-build-args
+
+  postfix:
+    build:
+      context: .
+      dockerfile: docker/postfix/Dockerfile
+      args:
+        <<: [*version-build-args, *agent-build-args]
+
+  dovecot:
+    build:
+      context: .
+      dockerfile: docker/dovecot/Dockerfile
+      args:
+        <<: [*version-build-args, *agent-build-args]
+
+  rspamd:
+    build:
+      context: .
+      dockerfile: docker/rspamd/Dockerfile
+      args:
+        <<: *version-build-args
+
+  unbound:
+    build:
+      context: .
+      dockerfile: docker/unbound/Dockerfile
+      args:
+        <<: *version-build-args
+
+  traefik:
+    build:
+      context: .
+      dockerfile: docker/traefik/Dockerfile
+      args:
+        <<: *version-build-args
+        TRAEFIK_VERSION: ${TRAEFIK_VERSION:-v3.7.13}
+
+  backup:
+    build:
+      context: .
+      dockerfile: docker/backup/Dockerfile
+      args:
+        <<: *version-build-args
+
+  firewall:
+    build:
+      context: .
+      dockerfile: docker/firewall/Dockerfile
+      args:
+        <<: [*version-build-args, *agent-build-args]

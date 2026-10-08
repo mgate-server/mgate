@@ -1,0 +1,3 @@
+# v_postfix_virtual_aliases(source citext, destination text): identity rows for mailboxes,
+# aliases, forwardings (keep_copy), list expansion, catch-all (source = '@<domain>').
+query = SELECT destination FROM v_postfix_virtual_aliases WHERE source = '%s'

@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mgate.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "api") | nindent 8 }}
+      {{- with .Values.api.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Schema first (compose: `depends_on: migrate: service_completed_successfully`). The migrate
+      # Job is a post-install hook, so on a fresh install it runs only after this Deployment
+      # exists — the initContainer below is what keeps api from starting on an empty database.
+      {{- include "mgate.migrateInitContainer" . | nindent 6 }}
+      containers:
+        - name: api
+          image: {{ include "mgate.image" (dict "root" . "repository" .Values.image.backend.repository "tag" .Values.image.backend.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # api serves the public REST API/SPA, the backend-only internal API, and the
+          # Postfix policy delegation service, all from one binary.
+          args: ["serve", "--components", "api,internal,policy"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "mgate.configMapName" . }}
+            - secretRef:
+                name: {{ include "mgate.secretsName" . }}
+          # api-only settings (take precedence over envFrom). See values.yaml `api.extraEnv`.
+          {{- with .Values.api.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: internal
+              containerPort: 8081
+              protocol: TCP
+            - name: policy
+              containerPort: 10040
+              protocol: TCP
+          livenessProbe:
+            httpGet: { path: {{ .Values.api.probes.path }}, port: http }
+            initialDelaySeconds: {{ .Values.api.probes.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.probes.periodSeconds }}
+          readinessProbe:
+            httpGet: { path: {{ .Values.api.probes.path }}, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            {{- include "mgate.securityContext" (dict "root" .) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: {{ include "mgate.certsReadOnly" (dict "root" . "component" "api") }}
+      volumes:
+        {{- include "mgate.certsVolume" . | nindent 8 }}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

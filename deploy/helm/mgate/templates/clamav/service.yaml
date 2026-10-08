@@ -1,0 +1,16 @@
+{{- if .Values.clamav.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  # Bare Service name — rspamd's ClamAV module is configured as "clamav:3310".
+  name: clamav
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "clamav") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "mgate.selectorLabels" (dict "root" . "component" "clamav") | nindent 4 }}
+  ports:
+    - { name: clamd, port: 3310, targetPort: clamd, protocol: TCP }
+{{- end }}

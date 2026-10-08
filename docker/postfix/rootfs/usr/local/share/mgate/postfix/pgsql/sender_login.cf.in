@@ -1,0 +1,3 @@
+# v_postfix_sender_login(sender citext, login text): which SASL login may use which envelope
+# sender (reject_sender_login_mismatch on 587/465).
+query = SELECT login FROM v_postfix_sender_login WHERE sender = '%s'

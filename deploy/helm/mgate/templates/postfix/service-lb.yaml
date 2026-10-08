@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mgate.fullname" . }}-postfix-public
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "postfix") | nindent 4 }}
+  {{- if or .Values.postfix.service.annotations .Values.postfix.service.proxyProtocol }}
+  annotations:
+    {{- with .Values.postfix.service.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.postfix.service.proxyProtocol }}
+    # AWS NLB example; other providers use a different annotation (or terminate PROXY protocol
+    # differently) — replace via postfix.service.annotations if you are not on AWS. Postfix itself
+    # must also be configured to expect/consume PROXY protocol on 25/465/587 for this to be safe
+    # (see docker/postfix; TODO(S1): confirm support).
+    service.beta.kubernetes.io/aws-load-balancer-proxy-protocol: "*"
+    {{- end }}
+  {{- end }}
+spec:
+  type: {{ .Values.postfix.service.type }}
+  {{- if eq .Values.postfix.service.type "LoadBalancer" }}
+  # Preserve client source IP for postscreen/rate-limiting; requires the cloud LB /
+  # MetalLB to support it. Set to "Cluster" only if your LB cannot honor "Local" AND you accept
+  # losing real client IPs (or terminate PROXY protocol upstream — see postfix.service.proxyProtocol).
+  externalTrafficPolicy: {{ .Values.postfix.service.externalTrafficPolicy }}
+  {{- end }}
+  {{- if .Values.postfix.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.postfix.service.loadBalancerIP }}
+  {{- end }}
+  selector:
+    {{- include "mgate.selectorLabels" (dict "root" . "component" "postfix") | nindent 4 }}
+  ports:
+    - { name: smtp, port: 25, targetPort: smtp, protocol: TCP }
+    - { name: smtps, port: 465, targetPort: smtps, protocol: TCP }
+    - { name: submission, port: 587, targetPort: submission, protocol: TCP }

@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mgate.fullname" . }}-webmail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "webmail") | nindent 4 }}
+spec:
+  replicas: {{ .Values.webmail.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" . "component" "webmail") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "webmail") | nindent 8 }}
+      {{- with .Values.webmail.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Schema first — see the same initContainer in templates/api/deployment.yaml.
+      {{- include "mgate.migrateInitContainer" . | nindent 6 }}
+      containers:
+        - name: webmail
+          image: {{ include "mgate.image" (dict "root" . "repository" .Values.image.backend.repository "tag" .Values.image.backend.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # IMAP/SMTP gateway REST+WS for webmail.
+          args: ["serve", "--components", "webmail"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "mgate.configMapName" . }}
+            - secretRef:
+                name: {{ include "mgate.secretsName" . }}
+          # Webmail-only settings (take precedence over envFrom). See values.yaml `webmail`.
+          env:
+            - name: MGATE_IMAP_ADDR
+              value: {{ .Values.webmail.upstream.imapAddr | quote }}
+            - name: MGATE_SUBMISSION_ADDR
+              value: {{ .Values.webmail.upstream.submissionAddr | quote }}
+            - name: MGATE_WEBMAIL_SPOOL_DIR
+              value: /var/lib/mgate/webmail-spool
+            # `| int64` before `quote`: the schema round-trips integers as float64, which would
+            # otherwise render large byte counts in scientific notation (see templates/configmap.yaml).
+            - name: MGATE_WEBMAIL_SPOOL_MAX
+              value: {{ .Values.webmail.spool.maxBytes | int64 | quote }}
+            {{- with .Values.webmail.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8082
+              protocol: TCP
+          livenessProbe:
+            httpGet: { path: {{ .Values.webmail.probes.path }}, port: http }
+            initialDelaySeconds: {{ .Values.webmail.probes.initialDelaySeconds }}
+            periodSeconds: {{ .Values.webmail.probes.periodSeconds }}
+          readinessProbe:
+            httpGet: { path: {{ .Values.webmail.probes.path }}, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            {{- include "mgate.securityContext" (dict "root" .) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.webmail.resources | nindent 12 }}
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: {{ include "mgate.certsReadOnly" (dict "root" . "component" "webmail") }}
+            # Staged attachment uploads: replica-local scratch space with a TTL (see values.yaml).
+            - name: webmail-spool
+              mountPath: /var/lib/mgate/webmail-spool
+      volumes:
+        {{- include "mgate.certsVolume" . | nindent 8 }}
+        - name: webmail-spool
+          emptyDir:
+            sizeLimit: {{ .Values.webmail.spool.sizeLimit | quote }}
+      {{- with .Values.webmail.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.webmail.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.webmail.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mgate.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "") | nindent 4 }}
+data:
+  # Non-secret env, shared by api/webmail/worker/migrate via envFrom. Names match the
+  # compose variables exactly so this ConfigMap can be diffed 1:1 against the compose .env.example.
+  MGATE_HOSTNAME: {{ .Values.config.hostname | quote }}
+  MGATE_ADMIN_EMAIL: {{ .Values.config.adminEmail | quote }}
+  TZ: {{ .Values.config.timezone | quote }}
+  MGATE_BIND_ADDRESS: {{ .Values.config.bindAddress | quote }}
+  MGATE_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  MGATE_LOG_FORMAT: {{ .Values.config.logFormat | quote }}
+  # `| int` before `quote`: values.schema.json round-trips config.messageSizeLimit through JSON
+  # (type: integer), which decodes as float64 in Go — quoting a float64 straight away renders large
+  # round numbers in scientific notation ("5.24288e+07" instead of "52428800"), silently breaking
+  # every daemon that parses this as a byte count. Verified with `helm template` before this fix.
+  MGATE_MESSAGE_SIZE_LIMIT: {{ .Values.config.messageSizeLimit | int | quote }}
+  MGATE_LICENSE_SERVER: {{ .Values.config.licenseServer | quote }}
+  MGATE_ACME_ENABLED: {{ .Values.config.acme.enabled | quote }}
+  MGATE_ACME_DIRECTORY: {{ .Values.config.acme.directory | quote }}
+  MGATE_ACME_CHALLENGE: {{ .Values.config.acme.challenge | quote }}
+  MGATE_ACME_DNS_PROVIDER: {{ .Values.config.acme.dnsProvider | quote }}
+  MGATE_ACME_EAB_KID: {{ .Values.config.acme.eabKid | quote }}
+  {{- with .Values.config.proxy }}
+  {{- if or .httpsProxy .httpProxy }}
+  # Outbound proxy (values.yaml config.proxy). In-cluster peers are always exempt, so
+  # internal plain-HTTP calls (api:8081, dovecot's doveadm API, the rspamd controller) never
+  # go through it.
+  HTTPS_PROXY: {{ .httpsProxy | quote }}
+  HTTP_PROXY: {{ .httpProxy | quote }}
+  NO_PROXY: {{ printf "localhost,127.0.0.1,::1,api,webmail,postgres,valkey,postfix,dovecot,rspamd,clamav,unbound,web,.svc,.cluster.local%s" (ternary (printf ",%s" .noProxy) "" (ne .noProxy "")) | quote }}
+  {{- end }}
+  {{- end }}
+  # NOTE: `mgate` (api/webmail/worker/migrate) never reads POSTGRES_HOST/PORT/DB/*_USER directly —
+  # only the composed MGATE_DATABASE_URL (see templates/secret.yaml) (the backend's
+  # documented configuration contract). POSTGRES_DB/POSTGRES_MAIL_USER below exist ONLY because
+  # Postfix/Dovecot's own init scripts (docker/postfix/rootfs/usr/local/bin/mgate-postfix-init,
+  # docker/dovecot/.../mgate-dovecot-init) read POSTGRES_HOST/POSTGRES_PORT/POSTGRES_DB/
+  # POSTGRES_MAIL_USER as bare names (with "postgres"/5432/"mgate"/"mgate_mail" fallbacks baked into
+  # those scripts) to render their own pgsql lookup config — mirroring compose's `x-mail-env` exactly.
+  # (An earlier revision of this ConfigMap invented MGATE_POSTGRES_HOST/MGATE_VALKEY_HOST/
+  # MGATE_RESOLVER_HOST, which nothing in the images reads at all — removed.)
+  POSTGRES_HOST: {{ include "mgate.postgresHost" . | quote }}
+  POSTGRES_PORT: {{ include "mgate.postgresPort" . | quote }}
+  POSTGRES_DB: {{ include "mgate.postgresDatabase" . | quote }}
+  POSTGRES_USER: {{ include "mgate.postgresUsername" . | quote }}
+  POSTGRES_MAIL_USER: {{ include "mgate.postgresMailUsername" . | quote }}
+  # Postfix/Dovecot (docker/postfix, docker/dovecot init scripts) — mirrors compose `x-mail-env`.
+  # MGATE_BACKEND_SUBNET feeds Postfix `mynetworks` and Dovecot `login_trusted_networks`: compose
+  # trusts its whole (small, fixed) docker bridge subnet as an authenticated-free internal relay
+  # path (e.g. the worker role sending transactional mail straight to postfix:25 without SASL).
+  # Kubernetes Pod CIDRs are cluster-specific and usually far larger than a /24 — defaulting to the
+  # compose CIDR here would either not match any real Pod IP (harmless no-op) or, on a cluster that
+  # happens to use that exact range, silently open a much bigger "trusted" relay window than
+  # intended. This chart therefore defaults `config.backendSubnet` to "" (Postfix/Dovecot then only
+  # trust loopback, same as compose's own `127.0.0.0/8` baseline) and requires operators who need the
+  # internal-relay behavior to set it explicitly to their real cluster Pod CIDR — see values.yaml and
+  # README.md "Известные ограничения".
+  {{- if .Values.config.backendSubnet }}
+  MGATE_BACKEND_SUBNET: {{ .Values.config.backendSubnet | quote }}
+  {{- end }}
+  # Owner (uid:gid) handed the bootstrap cert files in /certs so the backend's built-in ACME client (mgate image, uid 10001)
+  # can later replace them with atomic renames — matches compose `x-mail-env` and the mgate image's
+  # own uid (10001:10001).
+  MGATE_CERTS_OWNER: "10001:10001"
+  # Dovecot's Lua passdb/auth-policy/event-export base URL — bare "api" Service name,
+  # port 8081 (internal, ClusterIP-only, restricted by templates/networkpolicy.yaml). Was missing
+  # from this chart entirely before (Dovecot would have had no passdb backend to call).
+  MGATE_API_INTERNAL_URL: "http://api:8081"

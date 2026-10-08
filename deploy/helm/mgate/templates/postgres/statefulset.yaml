@@ -1,0 +1,90 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mgate.fullname" . }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  serviceName: postgres
+  replicas: 1 # bundled convenience option; use `postgresql.enabled: false` + `externalDatabase.*`
+              # for a real HA cluster.
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" . "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "postgres") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70 # postgres image's own "postgres" uid on -alpine
+        fsGroup: 70
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: postgres
+          image: {{ include "mgate.thirdPartyImage" .Values.postgresql.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - { name: POSTGRES_DB, value: {{ .Values.postgresql.database | quote }} }
+            - { name: POSTGRES_USER, value: {{ .Values.postgresql.username | quote }} }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mgate.secretsName" . }}
+                  key: POSTGRES_PASSWORD
+            - { name: PGDATA, value: "/var/lib/postgresql/data/pgdata" }
+            {{- with .Values.postgresql.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - { name: postgres, containerPort: 5432, protocol: TCP }
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", {{ .Values.postgresql.username | quote }}] }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", {{ .Values.postgresql.username | quote }}] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            # Creates the `mgate_mail` role on first init of an empty PGDATA — same
+            # script docker-compose.yml bind-mounts from docker/postgres/initdb/, packaged into this
+            # chart as a ConfigMap (see templates/postgres/initdb-configmap.yaml: Helm can only read
+            # files inside the chart directory, hence the copy under files/postgres-initdb/).
+            - { name: initdb, mountPath: /docker-entrypoint-initdb.d, readOnly: true }
+      {{- with .Values.postgresql.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: initdb
+          configMap:
+            name: {{ include "mgate.fullname" . }}-postgres-initdb
+            defaultMode: 0555
+        {{- if not .Values.postgresql.persistence.enabled }}
+        - name: data
+          emptyDir: {} # ephemeral: data is lost on pod restart — dev/test only, see values.yaml
+        {{- end }}
+  {{- if .Values.postgresql.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if or .Values.postgresql.persistence.storageClass .Values.global.storageClass }}
+        storageClassName: {{ .Values.postgresql.persistence.storageClass | default .Values.global.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.persistence.size }}
+  {{- end }}
+{{- end }}

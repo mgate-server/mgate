@@ -1,0 +1,82 @@
+# MGate Unbound configuration template.
+# Rendered to /etc/unbound/unbound.conf by docker-entrypoint.sh via `envsubst`
+# -- only $MGATE_BACKEND_SUBNET and $LOG_LEVEL are substituted (see
+# docker-entrypoint.sh for the exact envsubst variable list and defaults),
+# every other `$`-looking character below is literal Unbound syntax.
+server:
+    # No chroot: the container itself is the jail (single-purpose image),
+    # and chrooting complicates the paths Unbound needs (root hints, trust
+    # anchor, TLS certs for DNS-over-TLS if ever enabled). Not running as
+    # root either way -- see Dockerfile `USER unbound` + entrypoint.
+    chroot: ""
+    username: ""
+    directory: "/etc/unbound"
+
+    interface: 0.0.0.0
+    port: 53
+    do-ip4: yes
+    do-ip6: no
+    do-udp: yes
+    do-tcp: yes
+    so-reuseport: yes
+    num-threads: 2
+
+    # Loopback (for other processes sharing this container's netns, and for
+    # our own HEALTHCHECK) plus the mgate `backend` compose network
+    # (`MGATE_BACKEND_SUBNET`, default 172.30.1.0/24).
+    # Rendered at container start (see docker-entrypoint.sh) rather than
+    # baked into the image, since the subnet is a per-deployment .env value.
+    access-control: 127.0.0.0/8 allow
+    access-control: $MGATE_BACKEND_SUBNET allow
+    access-control: 0.0.0.0/0 refuse
+
+    # Recursive, DNSSEC-validating, NEVER forwarding by default: DNSBL zones
+    # (Spamhaus etc., used by Rspamd's RBL module) explicitly forbid
+    # resolving through shared/public forwarders (their usage policies key
+    # off the resolver's own source IP), and forwarding would also mean
+    # trusting someone else's AD bit instead of validating ourselves.
+    # Operators who need to forward a PRIVATE zone to an internal resolver
+    # do so through the extension point at the end of this file.
+    root-hints: "/usr/share/dns/root.hints"
+    auto-trust-anchor-file: "/var/lib/unbound/root.key"
+    val-permissive-mode: no
+    harden-dnssec-stripped: yes
+    harden-glue: yes
+    harden-below-nxdomain: yes
+    harden-algo-downgrade: yes
+
+    qname-minimisation: yes
+    hide-identity: yes
+    hide-version: yes
+
+    prefetch: yes
+    prefetch-key: yes
+    # Mail-workload sizing: many repeat lookups (MX/SPF/DKIM/DMARC checks,
+    # DNSBL queries per incoming connection) from a modest number of
+    # domains -- a larger message/rrset cache pays off more than deep
+    # per-query tuning. Revisit under real load (docs/TESTING.md).
+    cache-min-ttl: 0
+    cache-max-ttl: 86400
+    cache-max-negative-ttl: 3600
+    msg-cache-size: 64m
+    rrset-cache-size: 128m
+    neg-cache-size: 16m
+    infra-cache-numhosts: 20000
+
+    # RFC1918/loopback reverse queries are answered locally (NXDOMAIN) by
+    # Unbound's built-in default local-zones and never leak to the network.
+    # Private reverse zones can be forwarded via conf.d (see the end of this file).
+
+    # Foreground, log to stderr (captured by Docker's json-file driver) --
+    # no pidfile/logfile.
+    logfile: ""
+    use-syslog: no
+    pidfile: ""
+    verbosity: $LOG_LEVEL
+
+# Operator extension point (see docker/unbound/README.md): extra *.conf files
+# mounted into /etc/unbound/conf.d, e.g. a forward-zone for a private zone.
+# Must stay at the very end, at top level, after all clauses above. An empty
+# directory (no matches) is fine.
+include-toplevel: "/etc/unbound/conf.d/*.conf"
+

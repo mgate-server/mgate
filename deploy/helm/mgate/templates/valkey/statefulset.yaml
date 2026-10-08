@@ -1,0 +1,75 @@
+{{- if .Values.valkey.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mgate.fullname" . }}-valkey
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "valkey") | nindent 4 }}
+spec:
+  serviceName: valkey
+  replicas: 1 # TODO(S8): single instance, no clustering/Sentinel — fine for the compose-parity
+              # workload (cache/sessions/rate limits/streams/rspamd data), revisit for HA.
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" . "component" "valkey") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "valkey") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+      containers:
+        - name: valkey
+          image: {{ include "mgate.thirdPartyImage" .Values.valkey.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mgate.secretsName" . }}
+                  key: VALKEY_PASSWORD
+          # $(VALKEY_PASSWORD) is Kubernetes' own container-field env substitution, not a shell
+          # expansion — safe even though no shell runs here.
+          args: ["valkey-server", "--requirepass", "$(VALKEY_PASSWORD)", "--appendonly", "yes"]
+          ports:
+            - { name: valkey, containerPort: 6379, protocol: TCP }
+          # NOTE: probe exec.command does NOT get Kubernetes' $(VAR) substitution (that only
+          # applies to a container's own command/args) — use a real shell so $VALKEY_PASSWORD
+          # expands from the container's actual process environment instead.
+          livenessProbe:
+            exec: { command: ["sh", "-c", "valkey-cli -a \"$VALKEY_PASSWORD\" --no-auth-warning ping"] }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            exec: { command: ["sh", "-c", "valkey-cli -a \"$VALKEY_PASSWORD\" --no-auth-warning ping"] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            {{- toYaml .Values.valkey.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      {{- if not .Values.valkey.persistence.enabled }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}
+  {{- if .Values.valkey.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if or .Values.valkey.persistence.storageClass .Values.global.storageClass }}
+        storageClassName: {{ .Values.valkey.persistence.storageClass | default .Values.global.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.valkey.persistence.size }}
+  {{- end }}
+{{- end }}

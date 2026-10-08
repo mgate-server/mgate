@@ -1,0 +1,27 @@
+{{/*
+Bundled PostgreSQL's /docker-entrypoint-initdb.d/ ConfigMap: creates the `mgate_mail` read-only role postfix/dovecot's own pgsql lookups authenticate as. The postgres:18-alpine image runs
+every *.sh/*.sql file under /docker-entrypoint-initdb.d on a first, empty-PGDATA init only (see
+https://hub.docker.com/_/postgres "Initialization scripts") — same mechanism docker-compose.yml uses
+via a bind mount of docker/postgres/initdb/.
+
+SOURCE OF TRUTH: docker/postgres/initdb/10-create-mail-role.sh (NOT part of this
+chart). deploy/helm/mgate/files/postgres-initdb/10-create-mail-role.sh is a byte-for-byte COPY of it
+— Helm's `.Files.Get` can only read files inside the chart directory, so packaging a chart that
+reaches outside deploy/helm/mgate/** at `helm package`/`helm template` time is not possible; a copy is
+the only option short of a build-time symlink/vendoring step. `make validate-configs`
+(scripts/validate-configs.sh) now fails the build if
+  diff docker/postgres/initdb/10-create-mail-role.sh deploy/helm/mgate/files/postgres-initdb/10-create-mail-role.sh
+reports a difference, so the two cannot silently drift apart.
+*/}}
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mgate.fullname" . }}-postgres-initdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "postgres") | nindent 4 }}
+data:
+  10-create-mail-role.sh: |-
+    {{- .Files.Get "files/postgres-initdb/10-create-mail-role.sh" | nindent 4 }}
+{{- end }}

@@ -1,0 +1,16 @@
+#!/bin/bash
+# Container healthcheck (postfix image): master process alive + port 25 answers with a 220
+# banner (loopback is in mynetworks, so postscreen passes it straight to smtpd).
+set -euo pipefail
+
+postfix status >/dev/null 2>&1 || { echo "postfix master is not running"; exit 1; }
+
+exec 3<>/dev/tcp/127.0.0.1/25 || { echo "port 25 closed"; exit 1; }
+banner=""
+IFS= read -r -t 5 banner <&3 || true
+printf 'QUIT\r\n' >&3 || true
+exec 3>&-
+case "$banner" in
+    220*) exit 0 ;;
+    *) echo "unexpected SMTP banner: ${banner:-<none>}"; exit 1 ;;
+esac

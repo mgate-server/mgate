@@ -1,0 +1,234 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MGate Helm chart values",
+  "type": "object",
+  "required": ["config"],
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "imageRegistry": { "type": "string" },
+        "imageTag": { "type": "string" },
+        "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+        "imagePullSecrets": { "type": "array" },
+        "storageClass": { "type": "string" },
+        "podSecurityContext": { "type": "object" }
+      }
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "image": {
+      "type": "object",
+      "description": "Vendor-supplied closed-source images; exactly one backend build.",
+      "properties": {
+        "backend": {
+          "type": "object",
+          "properties": { "repository": { "type": "string" }, "tag": { "type": "string" } }
+        },
+        "agent": {
+          "type": "object",
+          "properties": { "repository": { "type": "string" }, "tag": { "type": "string" } }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "required": ["hostname", "adminEmail"],
+      "properties": {
+        "hostname": { "type": "string", "minLength": 1, "description": "MGATE_HOSTNAME (FQDN)" },
+        "adminEmail": { "type": "string", "minLength": 1, "format": "email" },
+        "timezone": { "type": "string" },
+        "bindAddress": { "type": "string" },
+        "logLevel": { "type": "string", "enum": ["trace", "debug", "info", "warn", "error"] },
+        "logFormat": { "type": "string", "enum": ["json", "pretty"] },
+        "messageSizeLimit": { "type": "integer", "minimum": 1 },
+        "licenseServer": { "type": "string" },
+        "acme": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "directory": { "type": "string" },
+            "challenge": { "type": "string", "enum": ["http-01", "dns-01"] },
+            "dnsProvider": { "type": "string" },
+            "eabKid": { "type": "string" },
+            "eabHmac": { "type": "string" }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "existingSecret": { "type": "string" }
+      }
+    },
+    "postgresql": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "database": { "type": "string" },
+        "username": { "type": "string" },
+        "mailUsername": { "type": "string" },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "size": { "type": "string" },
+            "storageClass": { "type": "string" }
+          }
+        }
+      }
+    },
+    "externalDatabase": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer" },
+        "database": { "type": "string" },
+        "username": { "type": "string" },
+        "existingSecret": { "type": "string" },
+        "existingSecretPasswordKey": { "type": "string" }
+      }
+    },
+    "valkey": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "size": { "type": "string" },
+            "storageClass": { "type": "string" }
+          }
+        }
+      }
+    },
+    "externalValkey": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer" },
+        "existingSecret": { "type": "string" },
+        "existingSecretPasswordKey": { "type": "string" }
+      }
+    },
+    "api": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "extraEnv": {
+          "type": "array",
+          "description": "Extra Kubernetes EnvVar entries for the api container (e.g. MGATE_WEBMAIL_TRUSTED_PROXIES)",
+          "items": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1 } } }
+        }
+      }
+    },
+    "webmail": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1, "description": "More than 1 requires ingress session affinity (staged uploads are replica-local)" },
+        "upstream": {
+          "type": "object",
+          "properties": {
+            "imapAddr": { "type": "string", "pattern": "^[^\\s:]+:[0-9]{1,5}$", "description": "MGATE_IMAP_ADDR (host:port, IMAP with STARTTLS)" },
+            "submissionAddr": { "type": "string", "pattern": "^[^\\s:]+:[0-9]{1,5}$", "description": "MGATE_SUBMISSION_ADDR (host:port, Postfix internal submission listener)" }
+          }
+        },
+        "spool": {
+          "type": "object",
+          "properties": {
+            "sizeLimit": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$", "description": "emptyDir sizeLimit (Kubernetes quantity)" },
+            "maxBytes": { "type": "integer", "minimum": 1048576, "description": "MGATE_WEBMAIL_SPOOL_MAX; keep below sizeLimit with headroom" }
+          }
+        },
+        "extraEnv": {
+          "type": "array",
+          "description": "Extra Kubernetes EnvVar entries for the webmail container",
+          "items": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1 } } }
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "extraEnv": {
+          "type": "array",
+          "description": "Extra Kubernetes EnvVar entries for the worker container",
+          "items": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1 } } }
+        }
+      }
+    },
+    "web": { "type": "object", "properties": { "replicaCount": { "type": "integer", "minimum": 1 } } },
+    "postfix": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1, "maximum": 1, "description": "TODO(S8): multi-replica not supported yet" },
+        "service": {
+          "type": "object",
+          "properties": { "type": { "type": "string", "enum": ["LoadBalancer", "ClusterIP", "NodePort"] } }
+        },
+        "webmailClientNets": {
+          "type": "string",
+          "pattern": "^([0-9a-fA-F:.]+/[0-9]{1,3}([ ,]+[0-9a-fA-F:.]+/[0-9]{1,3})*)?$",
+          "description": "MGATE_WEBMAIL_CLIENT_NETS: CIDRs admitted on Postfix 2587 (empty = config.backendSubnet, else any source)"
+        }
+      }
+    },
+    "dovecot": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1, "maximum": 1, "description": "Exactly one Dovecot per vmail volume (Dovecot 2.4 CE has no director)" },
+        "persistence": {
+          "type": "object",
+          "properties": { "accessMode": { "type": "string", "enum": ["ReadWriteOnce", "ReadWriteMany"] } }
+        }
+      }
+    },
+    "rspamd": { "type": "object" },
+    "clamav": {
+      "type": "object",
+      "properties": { "enabled": { "type": "boolean" } }
+    },
+    "unbound": { "type": "object" },
+    "migrate": { "type": "object" },
+    "backup": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "schedule": { "type": "string" }
+      }
+    },
+    "certs": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["mgate", "cert-manager", "existingSecret"] }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "extraHosts": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "allowDnsEgress": { "type": "boolean", "description": "DNS-only Egress policy; isolates egress of every release pod (see values.yaml)" },
+        "extraPolicies": { "type": "array" }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" }
+      }
+    },
+    "containerSecurityContext": { "type": "object" }
+  }
+}

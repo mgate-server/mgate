@@ -1,0 +1,778 @@
+# MGate — distribution compose file (image-only references).
+# This is what a user deploys with: `docker compose --env-file .env -f docker-compose.yml up -d`.
+# It never builds anything — see docker-compose.build.yml for the source-build overlay and
+# docker-compose.dev.yml for the local development overlay (mailpit relay, debug logging,
+# host-only published ports for infra services).
+#
+# Project name is fixed to `mgate` so that container/volume/network
+# names are predictable regardless of the directory this repo is checked out into.
+name: mgate
+
+# ---------------------------------------------------------------------------
+# Shared fragments (YAML anchors). Compose does not template shell logic, so we
+# keep repetition down with `<<: *anchor` merges instead of copy-pasting the same
+# logging/hardening/environment blocks into every service below.
+# ---------------------------------------------------------------------------
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# Baseline hardening applied to every service; each service still lists its own
+# minimal `cap_add` on top of this (never rely on the anchor alone to prove the
+# service is hardened — check the per-service block).
+x-hardening: &default-hardening
+  security_opt:
+    - "no-new-privileges:true"
+  cap_drop:
+    - ALL
+
+# Outbound HTTP(S) proxy for hosts without direct Internet access (licence server, ACME CA,
+# remote restic repositories). Empty by default = direct connections. NO_PROXY always starts
+# with the compose-internal service names, so in-stack calls (api:8081, dovecot's doveadm HTTP
+# API, the rspamd controller, ...) never go through the proxy even when HTTP_PROXY is set, and
+# then appends whatever the operator adds in .env (empty list entries are ignored).
+x-proxy-env: &proxy-env
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  NO_PROXY: localhost,127.0.0.1,::1,api,webmail,worker,migrate,postgres,valkey,postfix,dovecot,rspamd,clamav,unbound,traefik,web,${NO_PROXY:-}
+
+# Common environment for the mgate application processes (api/webmail/worker/migrate,
+# all built from the same `mgate` image). MGATE_DATABASE_URL / MGATE_REDIS_URL are
+# composed here from the Postgres/Valkey credentials.
+x-backend-env: &backend-env
+  <<: *proxy-env
+  TZ: ${TZ:-UTC}
+  MGATE_HOSTNAME: ${MGATE_HOSTNAME}
+  MGATE_ADMIN_EMAIL: ${MGATE_ADMIN_EMAIL:-}
+  MGATE_SECRET_KEY: ${MGATE_SECRET_KEY}
+  MGATE_INTERNAL_TOKEN: ${MGATE_INTERNAL_TOKEN}
+  MGATE_LOG_LEVEL: ${MGATE_LOG_LEVEL:-info}
+  MGATE_LOG_FORMAT: ${MGATE_LOG_FORMAT:-json}
+  MGATE_DATABASE_URL: postgres://${POSTGRES_USER:-mgate}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mgate}
+  MGATE_REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/0
+  MGATE_ACME_ENABLED: ${MGATE_ACME_ENABLED:-true}
+  MGATE_ACME_DIRECTORY: ${MGATE_ACME_DIRECTORY:-letsencrypt}
+  MGATE_ACME_CHALLENGE: ${MGATE_ACME_CHALLENGE:-http-01}
+  MGATE_ACME_DNS_PROVIDER: ${MGATE_ACME_DNS_PROVIDER:-}
+  MGATE_ACME_EAB_KID: ${MGATE_ACME_EAB_KID:-}
+  MGATE_ACME_EAB_HMAC: ${MGATE_ACME_EAB_HMAC:-}
+  MGATE_LICENSE_SERVER: ${MGATE_LICENSE_SERVER:-https://cloud.mgate.example}
+  MGATE_MESSAGE_SIZE_LIMIT: ${MGATE_MESSAGE_SIZE_LIMIT:-52428800}
+  DOVEADM_API_KEY: ${DOVEADM_API_KEY}
+  RSPAMD_CONTROLLER_PASSWORD: ${RSPAMD_CONTROLLER_PASSWORD}
+
+# Environment shared by the two mail containers (postfix, dovecot). Both run mgate-agent
+# (syslog on /dev/log -> stdout + Valkey stream `mgate:logs`, control API :7070, cert watcher)
+# and render their configs at start (docker/postfix, docker/dovecot init scripts).
+x-mail-env: &mail-env
+  TZ: ${TZ:-UTC}
+  MGATE_HOSTNAME: ${MGATE_HOSTNAME}
+  MGATE_ADMIN_EMAIL: ${MGATE_ADMIN_EMAIL:-}
+  MGATE_INTERNAL_TOKEN: ${MGATE_INTERNAL_TOKEN}
+  MGATE_REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/0
+  MGATE_BACKEND_SUBNET: ${MGATE_BACKEND_SUBNET:-172.30.1.0/24}
+  MGATE_LOG_LEVEL: ${MGATE_LOG_LEVEL:-info}
+  # Owner of the bootstrap certificate files in /certs — must be the uid:gid the mgate image
+  # runs as (10001), so the backend's ACME client can later replace them with atomic renames.
+  MGATE_CERTS_OWNER: "10001:10001"
+  # Postgres role used by the daemons' own SQL lookups (read-only views), NOT the api/worker
+  # MGATE_DATABASE_URL (that role has write access these containers must not have).
+  POSTGRES_MAIL_USER: ${POSTGRES_MAIL_USER:-mgate_mail}
+  POSTGRES_MAIL_PASSWORD: ${POSTGRES_MAIL_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB:-mgate}
+
+networks:
+  # Internet-facing: Traefik, and every service Traefik must be able to reach
+  # (api, webmail). Also used by unbound and postfix/dovecot for outbound egress.
+  public:
+    driver: bridge
+  # No internet egress (`internal: true`): postgres, valkey, and the private side
+  # of every other service. Static subnet so unbound can be given a fixed IP that
+  # other containers reference via `dns:`.
+  backend:
+    driver: bridge
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: ${MGATE_BACKEND_SUBNET:-172.30.1.0/24}
+
+volumes:
+  pg-data:
+  valkey-data:
+  vmail:
+  postfix-spool:
+  rspamd-data:
+  clamav-db:
+  certs:
+  proxy-dynamic:
+  mgate-data:
+  # Unbound state: RFC 5011 root trust anchor updates survive container recreation.
+  unbound-data:
+  # `backups` is intentionally NOT a docker-managed named volume: it is a
+  # bind mount of MGATE_BACKUP_DIR so operators can point restic/pg_dump output at a host path
+  # (or a mounted NFS/S3-gateway directory) they already back up. See the `backup` service below.
+
+services:
+  # ---------------------------------------------------------------------
+  # Edge / reverse proxy
+  # ---------------------------------------------------------------------
+  traefik:
+    image: ${MGATE_REGISTRY:-ghcr.io/mgate-server}/traefik:${MGATE_VERSION:-latest}
+    restart: unless-stopped
+    <<: *default-hardening
+    # Runs as uid 10001 (same as mgate) so it can write 00-routes.yml into proxy-dynamic and
+    # read the 0600/0640 key files mgate and the mail containers write to /certs. Binding
+    # 80/443 as non-root works because Docker sets net.ipv4.ip_unprivileged_port_start=0 in
+    # container network namespaces; NET_BIND_SERVICE is kept for runtimes that do not.
+    user: "10001:10001"
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - public
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    ports:
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_HTTP_PORT:-80}:80"
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_HTTPS_PORT:-443}:443"
+    environment:
+      MGATE_HOSTNAME: ${MGATE_HOSTNAME}
+      # `false` on hosts whose fs.inotify.max_user_instances is exhausted (the file provider
+      # then reads the dynamic files once at start; see docker/traefik/entrypoint.sh).
+      MGATE_TRAEFIK_FILE_WATCH: ${MGATE_TRAEFIK_FILE_WATCH:-true}
+      # Seconds entrypoint.sh waits for the mail containers' bootstrap cert (/certs/default)
+      # before publishing 05-bootstrap-certs.yml without it (docs/CONFIGURATION.md).
+      MGATE_TRAEFIK_CERT_WAIT: ${MGATE_TRAEFIK_CERT_WAIT:-20}
+    volumes:
+      - proxy-dynamic:/etc/traefik/dynamic
+      - certs:/certs:ro
+    healthcheck:
+      # Requires the static `ping` entrypoint enabled in docker/traefik/traefik.yml.
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    stop_grace_period: 10s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------
+  # SPA (nginx serving the built web/apps/spa bundle + runtime /config.json).
+  # Never serves /api/v1/*, /internal/v1/*, /.well-known/* or autoconfig/autodiscover — Traefik
+  # routes those to api/webmail first; this container only sees the rest.
+  # ---------------------------------------------------------------------
+  web:
+    image: ${MGATE_REGISTRY:-ghcr.io/mgate-server}/web:${MGATE_VERSION:-latest}
+    restart: unless-stopped
+    <<: *default-hardening
+    # nginx:alpine's own `nginx` user (uid/gid 101), baked into the image (docker/web/Dockerfile);
+    # no capabilities needed since it listens on 8080, not a privileged port.
+    user: "101:101"
+    cap_add: []
+    read_only: true
+    tmpfs:
+      - /tmp
+      # Explicit mode: an unqualified tmpfs mount over an existing image directory keeps that
+      # directory's *mode* but resets its owner to root:root (verified against Docker 25.0.2 /
+      # BuildKit — the image chowns this path to uid 101, but the tmpfs mount would otherwise
+      # come back root-owned and unwritable by the `user: "101:101"` above). mode=1777 sidesteps
+      # ownership entirely, like /tmp itself.
+      - /var/cache/nginx:mode=1777
+    networks:
+      - public
+    environment:
+      # Prefix the SPA puts in front of every /api/v1/... and /internal/v1/... call, baked into
+      # /config.json at container start. Empty = same origin as the SPA itself (the normal case:
+      # Traefik fronts both web and api on one hostname).
+      MGATE_API_BASE_URL: ${MGATE_API_BASE_URL:-}
+      # Optional links shown in the admin UI (rendered into /config.json "links" only when set).
+      MGATE_PRICING_URL: ${MGATE_PRICING_URL:-}
+      MGATE_VENDOR_PORTAL_URL: ${MGATE_VENDOR_PORTAL_URL:-}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------
+  # Data stores
+  # ---------------------------------------------------------------------
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    <<: *default-hardening
+    # Runs as the image's `postgres` user from the start: the entrypoint then skips its
+    # chown/gosu root phase, so no capabilities are needed (the pg-data volume is populated
+    # from the image's postgres-owned /var/lib/postgresql on first use).
+    user: postgres
+    cap_add: []
+    shm_size: 256m
+    networks:
+      - backend
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mgate}
+      POSTGRES_USER: ${POSTGRES_USER:-mgate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Consumed by docker/postgres/initdb/10-create-mail-role.sh (first init only).
+      POSTGRES_MAIL_USER: ${POSTGRES_MAIL_USER:-mgate_mail}
+      POSTGRES_MAIL_PASSWORD: ${POSTGRES_MAIL_PASSWORD}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - pg-data:/var/lib/postgresql
+      # Creates the mgate_mail role (LOGIN + CONNECT; SELECT on v_postfix_*/v_dovecot_* views is
+      # granted by the migrations). Runs only when pg-data is empty. Operators deploying from
+      # the release bundle must ship this directory next to docker-compose.yml.
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mgate} -d ${POSTGRES_DB:-mgate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  valkey:
+    image: valkey/valkey:9.0.6-alpine
+    restart: unless-stopped
+    <<: *default-hardening
+    # Non-root from the start (image user valkey = 999:1000): the entrypoint then skips its
+    # chown/setpriv root phase, so no capabilities are needed.
+    user: "999:1000"
+    cap_add: []
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      backend:
+        # Static IP so the `firewall` service (network_mode: host, no compose DNS) can reach
+        # Valkey's pubsub channel `mgate:bans:events` directly. Every other consumer uses the
+        # `valkey` service DNS name via MGATE_REDIS_URL; this address is compose-internal wiring.
+        ipv4_address: ${MGATE_VALKEY_IP:-172.30.1.10}
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+    command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD}", "--appendonly", "yes", "--dir", "/data"]
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------
+  # One-shot migration / bootstrap (same image as api/webmail/worker)
+  # ---------------------------------------------------------------------
+  migrate:
+    image: ${MGATE_IMAGE:-${MGATE_REGISTRY:-ghcr.io/mgate-server}/mgate}:${MGATE_VERSION:-latest}
+    command: ["migrate", "--bootstrap"]
+    restart: "no"
+    <<: *default-hardening
+    cap_add: []
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - backend
+    environment:
+      <<: *backend-env
+      MGATE_ADMIN_PASSWORD: ${MGATE_ADMIN_PASSWORD:-}
+    volumes:
+      - mgate-data:/var/lib/mgate
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------
+  # mgate application (api / webmail / worker components of the same image)
+  # ---------------------------------------------------------------------
+  api:
+    image: ${MGATE_IMAGE:-${MGATE_REGISTRY:-ghcr.io/mgate-server}/mgate}:${MGATE_VERSION:-latest}
+    command: ["serve", "--components", "api,internal,policy"]
+    restart: unless-stopped
+    <<: *default-hardening
+    cap_add: []
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - public
+      - backend
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    environment: *backend-env
+    volumes:
+      - mgate-data:/var/lib/mgate
+      # Written by the backend's ACME client as uid 10001 (/certs/live, /certs/default, 10-certs.yml).
+      - certs:/certs
+      - proxy-dynamic:/etc/traefik/dynamic
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mgate", "healthcheck", "--url", "http://127.0.0.1:8080/api/v1/system/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  webmail:
+    image: ${MGATE_IMAGE:-${MGATE_REGISTRY:-ghcr.io/mgate-server}/mgate}:${MGATE_VERSION:-latest}
+    command: ["serve", "--components", "webmail"]
+    restart: unless-stopped
+    <<: *default-hardening
+    cap_add: []
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - public
+      - backend
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    environment:
+      <<: *backend-env
+      # Upstream mail servers of the webmail gateway (both STARTTLS, verified against the
+      # certificate in /certs/default): Dovecot's internal IMAP listener 1143 and Postfix's
+      # internal submission listener 2587, both for webmail only and never published to the host.
+      # `dovecot-backend` / `postfix-backend` are aliases on the `backend` network only (the plain
+      # service names may resolve to the `public` address), so connections come from this
+      # container's backend address: Dovecot trusts it (login_trusted_networks) to forward the
+      # real client IP, and Postfix admits only MGATE_BACKEND_SUBNET on 2587.
+      MGATE_IMAP_ADDR: dovecot-backend:1143
+      MGATE_SUBMISSION_ADDR: postfix-backend:2587
+      # Staged attachment uploads live on the existing mgate-data volume.
+      MGATE_WEBMAIL_SPOOL_DIR: /var/lib/mgate/webmail-spool
+    volumes:
+      - mgate-data:/var/lib/mgate
+      # Read-only: the gateway only reads the server certificate to verify Dovecot/Postfix.
+      - certs:/certs:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mgate", "healthcheck", "--url", "http://127.0.0.1:8082/api/v1/mail/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  worker:
+    image: ${MGATE_IMAGE:-${MGATE_REGISTRY:-ghcr.io/mgate-server}/mgate}:${MGATE_VERSION:-latest}
+    command: ["worker"]
+    restart: unless-stopped
+    <<: *default-hardening
+    cap_add: []
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - public # egress for ACME HTTP-01/DNS-01, license-server RPC, DNS checks
+      - backend
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    environment: *backend-env
+    volumes:
+      - mgate-data:/var/lib/mgate
+      - certs:/certs
+      - proxy-dynamic:/etc/traefik/dynamic
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      # The worker has no listener. `mgate version` proves the binary and its
+      # runtime libraries are intact; the container itself exits when the worker process dies
+      # (tini PID 1). TODO(S2): a real liveness signal (heartbeat key in Valkey checked by
+      # `mgate healthcheck --worker`, or an internal-only health listener).
+      test: ["CMD", "mgate", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------
+  # Mail core
+  # ---------------------------------------------------------------------
+  postfix:
+    image: ${MGATE_REGISTRY:-ghcr.io/mgate-server}/postfix:${MGATE_VERSION:-latest}
+    restart: unless-stopped
+    <<: *default-hardening
+    # NET_BIND_SERVICE: 25/465/587. CHOWN/SETUID/SETGID/DAC_OVERRIDE: the master spawns children
+    # as postfix/vmail and owns queue files. FOWNER: `postfix check`/set-permissions chmod the
+    # queue directories on the postfix-spool volume (verified: fails with EPERM without it).
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
+    networks:
+      public: {}
+      backend:
+        # Resolves only on `backend`: the webmail gateway submits to postfix-backend:2587 so its
+        # source address is inside MGATE_BACKEND_SUBNET, the only network 2587 admits.
+        aliases:
+          - postfix-backend
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    # glibc strips the DNSSEC AD bit unless trust-ad is set; Postfix needs it for DANE
+    # (smtp_dns_support_level = dnssec).
+    dns_opt: ["trust-ad"]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      # Host ports are overridable (MGATE_*_PORT) for rootless Docker, which cannot bind <1024
+      # unless net.ipv4.ip_unprivileged_port_start is lowered; MX delivery needs 25 in production.
+      # 2587 (internal webmail submission) is deliberately not published.
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_SMTP_PORT:-25}:25"
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_SUBMISSIONS_PORT:-465}:465"
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_SUBMISSION_PORT:-587}:587"
+    environment:
+      <<: *mail-env
+      MGATE_MESSAGE_SIZE_LIMIT: ${MGATE_MESSAGE_SIZE_LIMIT:-52428800}
+      # dev-only override set by docker-compose.dev.yml (empty = normal direct delivery).
+      MGATE_RELAYHOST: ${MGATE_RELAYHOST:-}
+      MGATE_SPAMHAUS_DQS_KEY: ${MGATE_SPAMHAUS_DQS_KEY:-}
+    volumes:
+      - postfix-spool:/var/spool/postfix
+      - certs:/certs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+      rspamd:
+        condition: service_healthy
+      unbound:
+        condition: service_healthy
+    healthcheck:
+      # Master process alive + 220 banner on port 25 (docker/postfix/rootfs/usr/local/bin).
+      test: ["CMD", "/usr/local/bin/mgate-healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # s6 gives Postfix 20 s to finish in-flight SMTP sessions (S6_SERVICES_GRACETIME).
+    stop_grace_period: 40s
+    logging: *default-logging
+
+  dovecot:
+    image: ${MGATE_REGISTRY:-ghcr.io/mgate-server}/dovecot:${MGATE_VERSION:-latest}
+    restart: unless-stopped
+    <<: *default-hardening
+    # NET_BIND_SERVICE: 143/993/110/995/4190. CHOWN/SETUID/SETGID/DAC_OVERRIDE: master runs as
+    # root and drops to dovecot/vmail per process. SYS_CHROOT: *-login processes are chrooted
+    # into /run/dovecot/login (pre-auth code isolation; imap-login fails without it). KILL: root
+    # processes signal processes of other users (anvil ends the sessions of `doveadm kick`, which
+    # mgate uses when a mailbox is disabled or its password changes; master stops its children).
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - SYS_CHROOT
+      - KILL
+    networks:
+      public: {}
+      backend:
+        # Resolves only on `backend`: the webmail gateway connects to dovecot-backend:1143 so its
+        # source address is inside MGATE_BACKEND_SUBNET (login_trusted_networks). The plain
+        # `dovecot` name may resolve to the `public` address instead.
+        aliases:
+          - dovecot-backend
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      # 1143 (internal IMAP listener for the webmail gateway) is deliberately not published.
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_IMAP_PORT:-143}:143"
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_IMAPS_PORT:-993}:993"
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_POP3_PORT:-110}:110"
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_POP3S_PORT:-995}:995"
+      - "${MGATE_BIND_ADDRESS:-0.0.0.0}:${MGATE_MANAGESIEVE_PORT:-4190}:4190"
+    environment:
+      <<: *mail-env
+      DOVEADM_API_KEY: ${DOVEADM_API_KEY}
+      # IMAPSieve learning (Junk moves) -> rspamd controller, header `Password:`.
+      RSPAMD_CONTROLLER_PASSWORD: ${RSPAMD_CONTROLLER_PASSWORD}
+      # Lua passdb / auth policy / event export base URL (api internal listener).
+      MGATE_API_INTERNAL_URL: http://api:8081
+    volumes:
+      - vmail:/var/vmail
+      - certs:/certs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      # `doveadm service status` + IMAP greeting on 143 (docker/dovecot/rootfs/usr/local/bin).
+      test: ["CMD", "/usr/local/bin/mgate-healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # s6 gives Dovecot 15 s to close sessions (S6_SERVICES_GRACETIME).
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  rspamd:
+    image: ${MGATE_REGISTRY:-ghcr.io/mgate-server}/rspamd:${MGATE_VERSION:-latest}
+    restart: unless-stopped
+    <<: *default-hardening
+    cap_add: []
+    networks:
+      - public # DNSBL/RBL lookups, Rspamd's own DNS resolver config
+      - backend
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    # Rspamd exposes only RSPAMD_-prefixed variables to its config templates ({= env.X =}
+    # reads RSPAMD_X), see docs/mail/rspamd.md. CONTROLLER_PASSWORD and INTERNAL_TOKEN are
+    # mandatory: the config refuses to load without them.
+    environment:
+      TZ: ${TZ:-UTC}
+      RSPAMD_CONTROLLER_PASSWORD: ${RSPAMD_CONTROLLER_PASSWORD}
+      RSPAMD_INTERNAL_TOKEN: ${MGATE_INTERNAL_TOKEN}
+      RSPAMD_REDIS_HOST: valkey
+      RSPAMD_REDIS_PASSWORD: ${VALKEY_PASSWORD}
+      RSPAMD_REDIS_DB: "1"
+      RSPAMD_MESSAGE_SIZE_LIMIT: ${MGATE_MESSAGE_SIZE_LIMIT:-52428800}
+      RSPAMD_LOCAL_ADDRS: "127.0.0.0/8,${MGATE_BACKEND_SUBNET:-172.30.1.0/24}"
+      RSPAMD_CLAMAV_SERVERS: clamav:3310
+      RSPAMD_EVENTS_URL: http://api:8081/internal/v1/events/rspamd
+    volumes:
+      - rspamd-data:/var/lib/rspamd
+    depends_on:
+      valkey:
+        condition: service_healthy
+      unbound:
+        condition: service_healthy
+    healthcheck:
+      # Controller answers `stat` password-less from loopback (secure_ip).
+      test: ["CMD-SHELL", "rspamc -h 127.0.0.1:11334 stat >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    stop_grace_period: 15s
+    logging: *default-logging
+
+  clamav:
+    image: clamav/clamav:1.5.4-debian13-slim
+    restart: unless-stopped
+    profiles: [clamav]
+    <<: *default-hardening
+    # The official entrypoint starts as root to fix ownership of /var/lib/clamav and
+    # /run/clamav, then runs freshclam/clamd as the clamav user.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    # Signatures + clamd worker threads; upstream recommends 1.5–2 GB per clamd instance.
+    mem_limit: 2g
+    networks:
+      - public # freshclam signature updates
+      - backend
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    # Directives are patched into clamd.conf/freshclam.conf by the image entrypoint
+    # (docker/clamav/README.md). Sizes must track MGATE_MESSAGE_SIZE_LIMIT (50M by default);
+    # ClamAV units (M/G), not bytes — TODO(S1): derive them from MGATE_MESSAGE_SIZE_LIMIT.
+    environment:
+      TZ: ${TZ:-UTC}
+      CLAMD_CONF_StreamMaxLength: "50M"
+      CLAMD_CONF_MaxFileSize: "50M"
+      CLAMD_CONF_MaxScanSize: "150M"
+      CLAMD_CONF_MaxThreads: "4"
+      CLAMD_CONF_LogTime: "yes"
+      CLAMD_CONF_LogVerbose: "no"
+      FRESHCLAM_CONF_Checks: "12"
+      # Rspamd talks INSTREAM to clamd on 3310; clamav-milter is unused.
+      CLAMAV_NO_MILTERD: "true"
+    volumes:
+      - clamav-db:/var/lib/clamav
+    depends_on:
+      unbound:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      # First start downloads the full signature set (minutes).
+      start_period: 10m
+    logging: *default-logging
+
+  unbound:
+    image: ${MGATE_REGISTRY:-ghcr.io/mgate-server}/unbound:${MGATE_VERSION:-latest}
+    restart: unless-stopped
+    <<: *default-hardening
+    # Runs as the unprivileged `unbound` user; port 53 needs NET_BIND_SERVICE on runtimes that
+    # do not lower net.ipv4.ip_unprivileged_port_start (Docker does).
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      public: {} # recursion to the root/TLD servers (never forwards to a public resolver)
+      backend:
+        ipv4_address: ${MGATE_RESOLVER_IP:-172.30.1.53}
+    environment:
+      MGATE_BACKEND_SUBNET: ${MGATE_BACKEND_SUBNET:-172.30.1.0/24}
+      LOG_LEVEL: "1"
+    volumes:
+      # Rendered unbound.conf + root.key (RFC 5011 state); populated from the image on first use.
+      - unbound-data:/var/lib/unbound
+    healthcheck:
+      # `drill . NS` through the full recursion path (docker/unbound/healthcheck.sh).
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------
+  # Optional profiles
+  # ---------------------------------------------------------------------
+  backup:
+    image: ${MGATE_REGISTRY:-ghcr.io/mgate-server}/backup:${MGATE_VERSION:-latest}
+    restart: unless-stopped
+    profiles: [backup]
+    <<: *default-hardening
+    # Runs as root but with every capability dropped except DAC_READ_SEARCH: restic must read the
+    # whole mail store (/var/vmail is 0750 vmail:vmail = 5000:5000, Maildirs below it are
+    # private to vmail) and the private keys in /certs, which no fixed non-root uid can do.
+    # DAC_READ_SEARCH only bypasses read/search permission checks — no write anywhere it does
+    # not own: vmail and certs are mounted read-only below, and /backups (a bind mount Docker
+    # creates root-owned) plus the image's own work directory belong to root. Restoring needs
+    # write access and therefore runs as the separate `restore` service below.
+    user: "0:0"
+    cap_add:
+      - DAC_READ_SEARCH
+    networks:
+      - public # remote restic repositories (s3:...)
+      - backend # pg_dump against postgres
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    environment: &backup-env
+      <<: *proxy-env
+      TZ: ${TZ:-UTC}
+      POSTGRES_DB: ${POSTGRES_DB:-mgate}
+      POSTGRES_USER: ${POSTGRES_USER:-mgate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_MAIL_USER: ${POSTGRES_MAIL_USER:-mgate_mail}
+      MGATE_INTERNAL_TOKEN: ${MGATE_INTERNAL_TOKEN}
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 3 * * *}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-/backups/restic}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-7}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-6}
+    volumes:
+      - ${MGATE_BACKUP_DIR:-./backups}:/backups
+      - vmail:/var/vmail:ro
+      - certs:/certs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # supercronic is the long-running process; restic/pg_dump presence proves the toolchain.
+      test: ["CMD-SHELL", "pgrep -x supercronic >/dev/null 2>&1 || pidof supercronic >/dev/null 2>&1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  # One-shot restore (`make restore` = `docker compose run --rm restore`): same image and
+  # environment as `backup`, but with the mail store and certificates mounted read-write and the
+  # capabilities a restore needs — DAC_OVERRIDE (write into vmail-owned directories), CHOWN
+  # (give restored files back their 5000:5000 / 10001:10001 owners) and FOWNER (restore modes
+  # and timestamps of files root does not own). Never started by `up`: its own profile is not in
+  # COMPOSE_PROFILES, and `docker compose run` activates it only for that one invocation.
+  restore:
+    image: ${MGATE_REGISTRY:-ghcr.io/mgate-server}/backup:${MGATE_VERSION:-latest}
+    restart: "no"
+    profiles: [restore]
+    <<: *default-hardening
+    user: "0:0"
+    cap_add:
+      - DAC_OVERRIDE
+      - CHOWN
+      - FOWNER
+    networks:
+      - public
+      - backend
+    dns: ["${MGATE_RESOLVER_IP:-172.30.1.53}"]
+    environment: *backup-env
+    command: ["/usr/local/bin/restore.sh"]
+    volumes:
+      - ${MGATE_BACKUP_DIR:-./backups}:/backups
+      - vmail:/var/vmail
+      - certs:/certs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+  firewall:
+    image: ${MGATE_REGISTRY:-ghcr.io/mgate-server}/firewall:${MGATE_VERSION:-latest}
+    restart: unless-stopped
+    profiles: [firewall]
+    <<: *default-hardening
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    network_mode: host # nftables must manipulate the host's own netfilter tables
+    environment:
+      TZ: ${TZ:-UTC}
+      # network_mode: host has no compose DNS, so this must be Valkey's static backend IP (the
+      # host can still route to it via the docker-managed `backend` bridge interface even though
+      # that network is `internal: true` — that flag only blocks container-initiated egress).
+      MGATE_REDIS_URL: redis://:${VALKEY_PASSWORD}@${MGATE_VALKEY_IP:-172.30.1.10}:6379/0
+      MGATE_INTERNAL_TOKEN: ${MGATE_INTERNAL_TOKEN}
+      # Host network: the agent's control API must not listen on public interfaces.
+      MGATE_AGENT_LISTEN: 127.0.0.1:7070
+      MGATE_AGENT_NO_SYSLOG: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "nft list set inet mgate_filter mgate_ban >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging

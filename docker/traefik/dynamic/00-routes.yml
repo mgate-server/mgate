@@ -1,0 +1,137 @@
+# MGate route templates. Baked into the image at /opt/mgate/traefik/00-routes.yml
+# and copied (with ${MGATE_HOSTNAME} substituted by entrypoint.sh) into the shared
+# `proxy-dynamic` volume at /etc/traefik/dynamic/00-routes.yml, which Traefik's file provider
+# watches. `mgate` (worker/ACME) writes its own /etc/traefik/dynamic/10-certs.yml into the same
+# volume for TLS certificates — this file intentionally never touches `tls.stores`/
+# `tls.certificates`, only `tls.options` (cipher/version policy), to avoid fighting over that key.
+#
+# NOTE: `${MGATE_HOSTNAME}` below is a literal placeholder substituted by entrypoint.sh (plain
+# `sed`, not Traefik's own Go-template file-provider mode) — do not expect Traefik to resolve it.
+
+http:
+  middlewares:
+    mgate-security-headers:
+      headers:
+        stsSeconds: 15552000 # 180 days
+        stsIncludeSubdomains: false
+        stsPreload: false
+        contentTypeNosniff: true
+        customFrameOptionsValue: "DENY"
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+
+    mgate-https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    # Rate-limit middleware for /api/v1/auth — coarse edge-level throttle; the
+    # per-account/IP brute-force policy itself lives in the backend policy service (TODO(S2)), this is only a
+    # cheap first line of defense against volumetric abuse before it reaches the app.
+    mgate-auth-rate-limit:
+      rateLimit:
+        average: 10
+        period: 1m
+        burst: 20
+
+  routers:
+    # Port 80: ACME HTTP-01 challenge path must stay plain HTTP, never redirected.
+    acme-http01:
+      entryPoints: [web]
+      rule: "PathPrefix(`/.well-known/acme-challenge/`)"
+      priority: 100
+      service: api
+
+    # Port 80: everything else -> redirect to HTTPS.
+    http-catchall:
+      entryPoints: [web]
+      rule: "PathPrefix(`/`)"
+      priority: 1
+      middlewares: [mgate-https-redirect]
+      service: api
+
+    # Port 443: webmail gateway (higher priority than the generic admin/api host router below).
+    webmail:
+      entryPoints: [websecure]
+      rule: "Host(`${MGATE_HOSTNAME}`) && PathPrefix(`/api/v1/mail`)"
+      priority: 50
+      tls:
+        options: modern@file
+      middlewares: [mgate-security-headers]
+      service: webmail
+
+    # Port 443: auth endpoints get the rate-limit middleware in addition to security headers.
+    admin-auth:
+      entryPoints: [websecure]
+      rule: "Host(`${MGATE_HOSTNAME}`) && PathPrefix(`/api/v1/auth`)"
+      priority: 40
+      tls:
+        options: modern@file
+      middlewares: [mgate-security-headers, mgate-auth-rate-limit]
+      service: api
+
+    # Port 443: REST/internal-facing API surface on the main hostname, minus the two higher-
+    # priority routers above (`/api/*` + `/.well-known/*` -> api). Higher
+    # priority than the SPA catch-all below so /api/v1/mail and /api/v1/auth still win via their
+    # own routers, and every other /api/* path (plus /.well-known/*, e.g. an HTTP-01 retry over
+    # HTTPS) reaches `api`, never the SPA's index.html fallback.
+    admin-api:
+      entryPoints: [websecure]
+      rule: "Host(`${MGATE_HOSTNAME}`) && (PathPrefix(`/api`) || PathPrefix(`/.well-known`))"
+      priority: 30
+      tls:
+        options: modern@file
+      middlewares: [mgate-security-headers]
+      service: api
+
+    # Port 443: everything else on the main hostname -> the SPA (nginx `web` service serves
+    # static assets and falls back to index.html for client-side routes; the
+    # backend does not serve the SPA in compose/Helm). TLS1.3-only (admin/webmail).
+    admin:
+      entryPoints: [websecure]
+      rule: "Host(`${MGATE_HOSTNAME}`)"
+      priority: 10
+      tls:
+        options: modern@file
+      middlewares: [mgate-security-headers]
+      service: web
+
+    # Port 443: autoconfig/autodiscover/mta-sts subdomains of any managed domain. No explicit
+    # `tls.options` here on purpose: Traefik can only bind a named TLS options set to a router
+    # whose rule contains a literal `Host(...)` (used for per-SNI options selection at the
+    # ClientHello stage) — `HostRegexp(...)` has no such "domain" for Traefik to key on, and
+    # naming one anyway makes Traefik refuse the router ("unknown TLS options", verified against
+    # traefik:v3.7.13). Falls back to Traefik's own built-in default (TLS1.2+, modern ciphers),
+    # which already is the broad-compatibility profile these legacy-client-facing hosts want.
+    autoconfig:
+      entryPoints: [websecure]
+      rule: "HostRegexp(`^(autoconfig|autodiscover|mta-sts)\\..+$`)"
+      priority: 10
+      tls: {}
+      middlewares: [mgate-security-headers]
+      service: api
+
+  services:
+    api:
+      loadBalancer:
+        servers:
+          - url: "http://api:8080"
+    webmail:
+      loadBalancer:
+        servers:
+          - url: "http://webmail:8082"
+    web:
+      loadBalancer:
+        servers:
+          - url: "http://web:8080"
+
+tls:
+  options:
+    # TLS 1.3 by default: admin panel + webmail host use this, TLS1.3 only. Routers
+    # whose rule has no literal Host(...) (autoconfig/autodiscover/mta-sts, see below) cannot be
+    # assigned a named options set at all and fall back to Traefik's own built-in default
+    # (TLS1.2+, modern cipher list) — intentionally NOT redefined here as a "default" options
+    # block, since naming one "default" collides with that fallback path (verified against
+    # traefik:v3.7.13: "unknown TLS options: default@file" for domain-less routers).
+    modern:
+      minVersion: VersionTLS13

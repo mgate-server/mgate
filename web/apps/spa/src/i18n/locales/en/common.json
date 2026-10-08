@@ -1,0 +1,698 @@
+{
+  "app": {
+    "name": "MGate"
+  },
+  "common": {
+    "save": "Save",
+    "saved": "Saved!",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "create": "Create",
+    "add": "Add",
+    "loading": "Loading…",
+    "error": "Error",
+    "retry": "Retry",
+    "search": "Search",
+    "close": "Close",
+    "back": "Back",
+    "logout": "Sign out",
+    "refresh": "Refresh",
+    "status": "Status",
+    "all": "All",
+    "yes": "Yes",
+    "no": "No",
+    "copy": "Copy",
+    "copied": "Copied",
+    "activate": "Activate",
+    "operational": "Operational",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "communityEdition": "Community",
+    "proEdition": "Pro"
+  },
+  "forbidden": {
+    "description": "Access denied. You do not have sufficient permissions to view this page."
+  },
+  "notFound": {
+    "description": "Page not found"
+  },
+  "nav": {
+    "admin": {
+      "dashboard": "Dashboard",
+      "domains": "Domains",
+      "mailboxes": "Mailboxes",
+      "aliases": "Aliases",
+      "forwardings": "Forwardings",
+      "lists": "Distribution lists",
+      "catchAll": "Catch-all",
+      "queue": "Queue",
+      "logs": "Logs",
+      "statistics": "Statistics",
+      "certificates": "Certificates",
+      "security": "Security",
+      "admins": "Admins",
+      "settings": "Settings",
+      "license": "License",
+      "docs": "Documentation",
+      "helpSection": "Help & Documentation",
+      "proSection": "PRO Features"
+    },
+    "account": {
+      "overview": "Overview",
+      "password": "Password",
+      "twoFactor": "Two-factor auth (in development)",
+      "appPasswords": "App passwords",
+      "vacation": "Vacation responder",
+      "filters": "Filters",
+      "forwarding": "Forwarding",
+      "sessions": "Sessions"
+    },
+    "mail": {
+      "inbox": "Inbox",
+      "sent": "Sent",
+      "drafts": "Drafts",
+      "spam": "Spam",
+      "trash": "Trash",
+      "compose": "Compose",
+      "contacts": "Contacts",
+      "settings": "Settings",
+      "archive": "Archive"
+    }
+  },
+  "admin": {
+    "dashboard": {
+      "domains": "Domains",
+      "mailboxes": "Mailboxes",
+      "queue": "Queue",
+      "spamToday": "Spam (24h)",
+      "uptime": "Uptime",
+      "quickActions": "Quick actions",
+      "addDomain": "Add domain",
+      "createMailbox": "Create mailbox",
+      "viewLogs": "View logs",
+      "systemHealth": "System health",
+      "apiStatus": "API & Database",
+      "mailServices": "Mail daemons (Postfix / Dovecot)",
+      "antispam": "Rspamd & Valkey"
+    },
+    "docs": {
+      "title": "Documentation & User Guide",
+      "subtitle": "Comprehensive practical guide to MGate mail platform for administrators and users"
+    },
+    "domains": {
+      "domain": "Domain",
+      "domainName": "Domain name",
+      "id": "Domain ID",
+      "primary": "primary",
+      "mailboxes": "Mailboxes",
+      "empty": "Domains list is empty",
+      "addTitle": "Add mail domain",
+      "invalidName": "Enter a valid domain name (e.g. example.com)",
+      "createHint": "After adding the domain, configure DNS records (MX, SPF, DKIM).",
+      "suspend": "Suspend",
+      "activate": "Activate",
+      "confirmDelete": "Delete domain?",
+      "tabs": {
+        "overview": "Overview",
+        "dns": "DNS Wizard",
+        "quotas": "Quotas"
+      }
+    },
+    "dns": {
+      "instructions": "Add these DNS records to your DNS provider for proper routing and mail signing.",
+      "verify": "Verify DNS",
+      "rotateDkim": "Rotate DKIM",
+      "loading": "Loading records..."
+    },
+    "quotas": {
+      "maxMailboxes": "Max mailboxes (0 = unlimited)",
+      "totalQuotaGb": "Total domain quota (GB, 0 = unlimited)"
+    },
+    "mailboxes": {
+      "address": "Address",
+      "quota": "Quota",
+      "empty": "No mailboxes found",
+      "create": "Create mailbox",
+      "createTitle": "Create mailbox",
+      "localPart": "Mailbox name",
+      "displayName": "Display name (optional)",
+      "quotaGb": "Quota (GB)",
+      "resetPassword": "Password",
+      "resetPasswordTitle": "Reset password",
+      "newPassword": "New password",
+      "resetTarget": "Reset password for",
+      "editQuotaTitle": "Change quota",
+      "force2fa": "Force 2FA",
+      "confirmDelete": "Delete mailbox?",
+      "force2faDev": "Forced 2FA is in development"
+    },
+    "aliases": {
+      "source": "Alias",
+      "destinations": "Recipients",
+      "empty": "No aliases configured",
+      "create": "Create alias",
+      "createTitle": "Create alias",
+      "aliasName": "Alias name",
+      "recipients": "Destinations (comma or newline separated)",
+      "confirmDelete": "Delete alias?"
+    },
+    "forwarding": {
+      "source": "Source mailbox",
+      "destination": "Forward to",
+      "keepCopy": "Keep copy",
+      "empty": "No forwarding rules configured",
+      "create": "Configure forwarding",
+      "createTitle": "Configure mail forwarding",
+      "keepCopyLabel": "Keep a copy of incoming emails in source mailbox",
+      "confirmDelete": "Delete forwarding?"
+    },
+    "catchAll": {
+      "description": "Catch-all forwards all incoming mail sent to non-existent addresses in the domain to a designated mailbox.",
+      "targetMailbox": "Target mailbox",
+      "noMailboxes": "There are no mailboxes in this domain.",
+      "disable": "Disable Catch-all"
+    },
+    "lists": {
+      "address": "List address",
+      "sendPolicy": "Send policy",
+      "members": "Members",
+      "membersCount": "members",
+      "empty": "No distribution lists created",
+      "create": "Create list",
+      "createTitle": "Create distribution list",
+      "localPart": "List name",
+      "displayName": "Title (optional)",
+      "policyMembersOnly": "List members only (members_only)",
+      "policyDomainOnly": "Domain users only (domain_only)",
+      "policyOpen": "Open to all senders (open)",
+      "policyModerated": "Moderated (moderated)",
+      "manageMembers": "Members",
+      "membersTitle": "List members",
+      "noMembers": "No members in this list yet.",
+      "confirmDelete": "Delete list?"
+    },
+    "admins": {
+      "email": "Admin email",
+      "role": "Role",
+      "grantedDomains": "Granted domains",
+      "empty": "Admin list is empty",
+      "create": "Add admin",
+      "createTitle": "Create administrator account",
+      "selectDomains": "Assign domains",
+      "confirmDelete": "Delete administrator?"
+    },
+    "queue": {
+      "from": "Sender",
+      "to": "Recipients",
+      "size": "Size",
+      "empty": "Mail queue is empty",
+      "flush": "Flush queue",
+      "hold": "Hold",
+      "release": "Release",
+      "confirmDelete": "Delete message from queue?"
+    },
+    "logs": {
+      "filterIp": "IP address",
+      "filterProg": "Program (postfix, dovecot, rspamd)",
+      "filterMessage": "Message text / address",
+      "eventsCount": "events",
+      "autoscroll": "Auto-scroll",
+      "waiting": "Waiting for live log stream events...",
+      "noMatches": "No events matching the filter.",
+      "pause": "Pause",
+      "resume": "Resume",
+      "clear": "Clear"
+    },
+    "stats": {
+      "totalEmails": "Total messages",
+      "delivered": "Delivered",
+      "spamBlocked": "Spam blocked",
+      "trafficVolume": "Traffic",
+      "breakdownTitle": "Breakdown by event type",
+      "metric": "Event metric",
+      "count": "Message count",
+      "volume": "Data volume",
+      "empty": "No statistics data available for the selected period."
+    },
+    "certs": {
+      "name": "Certificate name",
+      "source": "Source",
+      "validity": "Valid until",
+      "empty": "No certificates found. Upload your own certificate: automatic Let’s Encrypt issuance is in development.",
+      "upload": "Upload certificate",
+      "uploadTitle": "Upload custom SSL/TLS certificate",
+      "domains": "Domains / SANs (comma separated)",
+      "chainPem": "Certificate (Chain PEM)",
+      "keyPem": "Private Key PEM",
+      "renew": "Renew",
+      "confirmDelete": "Delete certificate?",
+      "info": "By default the server uses a self-signed certificate: mail clients and browsers will warn about an untrusted certificate. For production use, upload your own certificate (PEM chain and private key). Automatic Let’s Encrypt issuance is in development.",
+      "nameOptional": "Name (optional)",
+      "sourceUploaded": "Uploaded",
+      "sourceSelfSigned": "Self-signed",
+      "statusValid": "Valid",
+      "statusExpiring": "Expiring soon",
+      "statusExpired": "Expired",
+      "statusError": "Error",
+      "statusPending": "Pending deployment",
+      "uploadSubmit": "Upload"
+    },
+    "security": {
+      "tabs": {
+        "bans": "IP Bans",
+        "rateLimits": "Rate Limits"
+      },
+      "ip": "IP address",
+      "unban": "Unban",
+      "addBan": "Ban IP",
+      "addBanTitle": "Manual IP ban",
+      "banHours": "Ban duration (hours)",
+      "banReason": "Ban reason",
+      "bansHint": "List of banned IP addresses. Mail daemons will drop connections immediately.",
+      "emptyBans": "No active IP bans",
+      "rateLimitsHint": "Hourly and daily outgoing message limits to prevent spam from compromised accounts.",
+      "mbHourly": "Messages per mailbox / hour",
+      "mbDaily": "Messages per mailbox / day",
+      "domHourly": "Messages per domain / hour",
+      "domDaily": "Messages per domain / day",
+      "ipHourly": "Messages per IP / hour"
+    },
+    "license": {
+      "currentStatus": "Current license status",
+      "edition": "Edition",
+      "domainUsage": "Domain usage",
+      "validUntil": "Validity period",
+      "deactivate": "Deactivate license",
+      "confirmDeactivate": "Deactivate Pro license on this server and switch to Community?",
+      "upgrade": "Upgrade to Pro",
+      "upgradeTitle": "Activate MGate Pro",
+      "upgradeDescription": "Lift the 1-domain limit and unlock advanced Pro capabilities.",
+      "upgradeButton": "Details",
+      "upgradeText": "Lifts the 1-domain limit, unlocks Pro modules. Opens the purchase page.",
+      "enterCode": "Enter activation code",
+      "activated": "License activated successfully!",
+      "conflictError": "License conflict (ProConflict): active domains exceed the limit or the license is bound to another server."
+    },
+    "settings": {
+      "generalTitle": "General mail server settings",
+      "serverName": "Server name",
+      "maxMessageSize": "Max message size (MB)",
+      "defaultQuota": "Default mailbox quota (GB)",
+      "spamScore": "Spam rejection threshold (Rspamd score)",
+      "enforceTls": "Enforce TLS encryption (STARTTLS / SSL)",
+      "greylisting": "Enable Greylisting against spam bots"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Sign in to MGate",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Sign in",
+      "totpTitle": "Two-factor code",
+      "totpCode": "Code from your authenticator app",
+      "totpSubmit": "Confirm",
+      "genericError": "Authentication error"
+    }
+  },
+  "mail": {
+    "reader": {
+      "empty": "Select a message to read",
+      "showImages": "Show images",
+      "remoteImagesBlocked": "Remote images are blocked to protect you from tracking pixels",
+      "reply": "Reply",
+      "forward": "Forward",
+      "markRead": "Mark as read",
+      "markUnread": "Mark as unread",
+      "loading": "Loading message...",
+      "noSelectionTitle": "No message selected",
+      "noSelectionDesc": "Select a message from the list to read it.",
+      "backToList": "Back to the list",
+      "replyAll": "Reply all",
+      "archive": "Archive",
+      "delete": "Delete",
+      "flag": "Star",
+      "unflag": "Remove star",
+      "print": "Print",
+      "downloadEml": "Download message (.eml)",
+      "confirmDeleteForever": "Delete this message permanently? This cannot be undone.",
+      "to": "To",
+      "cc": "Cc",
+      "bcc": "Bcc",
+      "noSubject": "(No subject)",
+      "attachments": "Attachments",
+      "attachmentFallback": "attachment-{{index}}",
+      "tooLarge": "This message is too large to display in the browser. Download it and open it in a mail client.",
+      "remoteImagesDisabled": "Remote images are turned off in your mail settings",
+      "spam": "Mark as spam",
+      "moveTo": "Move to folder…"
+    },
+    "authResults": {
+      "spf": "SPF",
+      "dkim": "DKIM",
+      "dmarc": "DMARC"
+    },
+    "search": {
+      "placeholder": "Search emails...",
+      "unreadOnly": "Unread",
+      "flaggedOnly": "Starred",
+      "allFolders": "All folders",
+      "results": "Search results"
+    },
+    "list": {
+      "empty": "No messages in this folder",
+      "loading": "Loading messages...",
+      "count_one": "{{count}} message",
+      "count_other": "{{count}} messages",
+      "loadMore": "Load more",
+      "refresh": "Refresh"
+    },
+    "compose": {
+      "to": "To",
+      "cc": "Cc",
+      "subject": "Subject",
+      "send": "Send Message",
+      "dropAttachments": "Drag and drop files here to attach",
+      "bcc": "Bcc",
+      "loading": "Preparing the message...",
+      "newMessage": "New message",
+      "draft": "Draft",
+      "inReply": "Reply to a message",
+      "forwarding": "Forwarding a message",
+      "subjectPlaceholder": "Message subject",
+      "attach": "Attach",
+      "uploading": "Uploading...",
+      "removeAttachment": "Remove attachment",
+      "dropNow": "Drop files to attach them",
+      "attachmentLimit": "Maximum attachment size: {{max}}",
+      "unnamedAttachment": "attachment",
+      "includeOriginalAttachments": "Include the attachments of the original message",
+      "saveDraft": "Save draft",
+      "saving": "Saving...",
+      "savedAt": "Draft saved at {{time}}",
+      "saveFailed": "Could not save the draft",
+      "signature": "Signature",
+      "insertSignature": "Insert signature...",
+      "defaultMark": "(default)",
+      "confirmDiscard": "Delete the draft and close the editor?",
+      "confirmNoSubject": "The message has no subject. Send it anyway?",
+      "notSavedToSent": "The message was sent, but a copy could not be saved to Sent",
+      "quoteHeader": "On {{date}}, {{from}} wrote:",
+      "forwardTitle": "---------- Forwarded message ----------",
+      "fwdFrom": "From",
+      "fwdTo": "To",
+      "fwdCc": "Cc",
+      "fwdSubject": "Subject",
+      "fwdDate": "Date",
+      "errNoSender": "Could not determine the sender address. Please sign in again.",
+      "errNoRecipients": "Add at least one recipient.",
+      "errInvalidAddress": "Invalid address: {{list}}",
+      "errTooManyRecipients": "Too many recipients (maximum {{max}})."
+    },
+    "contacts": {
+      "name": "Name",
+      "email": "Email",
+      "phone": "Phone",
+      "group": "Group",
+      "notes": "Notes",
+      "import": "Import CSV/vCard",
+      "export": "Export",
+      "add": "Add Contact",
+      "searchPlaceholder": "Search by name, email or group...",
+      "empty": "No contacts found.",
+      "newTitle": "New Contact",
+      "editTitle": "Edit Contact",
+      "subtitle": "Address book (vCard RFC 6350 / CSV) and your correspondents",
+      "importHint": "Import contacts from .vcf (vCard) or .csv",
+      "importDone": "Contacts imported: {{count}}",
+      "importSkipped": "Entries skipped: {{count}}",
+      "importFailed": "Could not import the contacts file",
+      "importTooLarge": "The file is larger than 1 MB. Split it into parts.",
+      "exportVcard": "Export vCard",
+      "exportVcardHint": "Export as RFC 6350 vCard",
+      "exportCsv": "CSV",
+      "exportCsvHint": "Export as CSV",
+      "defaultGroup": "General",
+      "confirmDelete": "Delete contact {{name}}?",
+      "noMatches": "No contacts match your search",
+      "emptyHint": "Add your first contact or import an address book from vCard/CSV.",
+      "namePlaceholder": "Jane Smith",
+      "phonePlaceholder": "+1 555 000 0000",
+      "groupPlaceholder": "Colleagues, Clients...",
+      "notesPlaceholder": "Additional information about the contact..."
+    },
+    "settings": {
+      "signaturesTitle": "Email Signatures",
+      "addSig": "Create Signature",
+      "signaturesHint": "Default signature is automatically inserted into new messages in composer.",
+      "noSignatures": "You do not have any signatures yet.",
+      "sigName": "Name",
+      "sigContent": "Content",
+      "displayTitle": "Webmail Preferences",
+      "newSigTitle": "New Signature",
+      "sigText": "Signature Text",
+      "makeDefault": "Set as default for new messages",
+      "remoteImagesPolicy": "Remote images display policy",
+      "imgAsk": "Block by default (ask permission)",
+      "imgAlways": "Always display images",
+      "imgNever": "Never load remote images",
+      "densityLabel": "Message list density",
+      "compact": "Compact",
+      "normal": "Normal",
+      "comfortable": "Comfortable",
+      "subtitle": "Webmail personalisation, signatures and display",
+      "sigLoading": "Loading signatures...",
+      "defaultBadge": "Default",
+      "makeDefaultAction": "Make default",
+      "confirmDeleteSig": "Delete signature \"{{name}}\"?",
+      "noSignaturesHint": "Create a signature to add your contact details and greeting to outgoing messages automatically.",
+      "createFirstSig": "Create your first signature",
+      "editSigTitle": "Edit signature",
+      "sigNamePlaceholder": "Work / Main",
+      "sigTextPlaceholder": "Best regards,\nJane Smith\nEngineer",
+      "remoteImagesHint": "Protection against trackers and web beacons in messages",
+      "densityHint": "Row spacing in the message list",
+      "markReadOnOpen": "Mark a message as read when it is opened",
+      "markReadOnOpenHint": "When off, a message stays unread until you mark it yourself."
+    },
+    "title": "Mail",
+    "quota": {
+      "label": "Storage"
+    },
+    "folders": {
+      "title": "Folders",
+      "custom": "Folder",
+      "manage": "Manage folders",
+      "manageTitle": "Folders",
+      "manageHint": "Create your own folders, rename or delete them. System folders (inbox, sent, drafts, spam, trash, archive) cannot be changed. A \"/\" in the name creates a nested folder.",
+      "system": "system",
+      "rename": "Rename",
+      "renameLabel": "Rename folder {{name}}",
+      "delete": "Delete folder",
+      "deleteLabel": "Delete folder {{name}}",
+      "confirmDelete": "Delete folder \"{{name}}\" together with all its messages? This cannot be undone.",
+      "newLabel": "New folder",
+      "newPlaceholder": "For example, Projects"
+    },
+    "tools": {
+      "title": "Tools"
+    },
+    "thread": {
+      "title": "Conversation"
+    },
+    "unavailable": {
+      "toAdmin": "Go to the admin panel",
+      "signOut": "Sign out",
+      "webmail_requires_mailbox": {
+        "title": "Webmail is available for mailboxes only",
+        "description": "You are signed in as an administrator. An administrator has no mailbox of their own, so mail cannot be read or sent here. Sign out and sign in with a mailbox address."
+      },
+      "mailbox_disabled": {
+        "title": "Mailbox is disabled",
+        "description": "This mailbox has been disabled by an administrator. Contact your mail administrator."
+      },
+      "domain_disabled": {
+        "title": "Domain is disabled",
+        "description": "The domain of this mailbox has been disabled. Contact your mail administrator."
+      }
+    },
+    "errors": {
+      "unknown": "Something went wrong. Please try again.",
+      "network": "Cannot reach the server. Check your connection and try again.",
+      "internal": "Internal server error. Please try again later.",
+      "unauthorized": "Your session has ended. Please sign in again.",
+      "csrf_token_invalid": "Your session is out of date. Reload the page and try again.",
+      "webmail_requires_mailbox": "Webmail is available for mailboxes only.",
+      "mailbox_disabled": "The mailbox is disabled.",
+      "domain_disabled": "The domain of this mailbox is disabled.",
+      "not_found": "Not found. It may have been deleted already.",
+      "stale_id": "This message is no longer available: the mailbox has changed. Refresh the list.",
+      "conflict": "This already exists.",
+      "system_folder": "A system folder cannot be changed or deleted.",
+      "validation_failed": "Please check the data you entered.",
+      "attachment_too_large": "The file is too large. Maximum attachment size: {{max}}.",
+      "message_too_large": "The message is too large. Maximum size: {{max}}.",
+      "upload_quota_exceeded": "The limit of uploaded attachments is reached. Send the message or remove some files.",
+      "quota_exceeded": "The mailbox is full. Free some space and try again.",
+      "spool_full": "Temporary attachment storage is full. Please try again later.",
+      "sender_not_allowed": "This mailbox is not allowed to send from the selected address.",
+      "rate_limited": "Too many requests. Try again in {{seconds}} s.",
+      "sending_suspended": "Sending from this domain is suspended. Contact your administrator.",
+      "recipient_rejected": "The recipient {{recipient}} was rejected by the mail server. Check the address.",
+      "upstream_unavailable": "The mail server is temporarily unavailable. Try again in {{seconds}} s.",
+      "upstream_busy": "The server is busy. Please try again shortly.",
+      "not_implemented": "This feature is not available yet.",
+      "attachment_not_found": "The uploaded attachment was not found. Attach the file again."
+    }
+  },
+  "account": {
+    "overview": {
+      "email": "Mailbox Email",
+      "displayName": "Display Name",
+      "createdAt": "Created At",
+      "lastLogin": "Last Login",
+      "currentSession": "Current Session",
+      "mailboxQuota": "Mailbox Quota",
+      "quotaDescription": "Disk quota for this mailbox including messages, attachments and folders.",
+      "quickActions": "Quick Actions"
+    },
+    "password": {
+      "current": "Current Password",
+      "next": "New Password",
+      "confirm": "Confirm Password",
+      "mismatch": "Passwords do not match",
+      "success": "Password changed successfully! Sessions on other devices terminated."
+    },
+    "2fa": {
+      "subtitle": "TOTP one-time codes at web sign-in",
+      "devBadge": "In development",
+      "devTitle": "Two-factor authentication does not work yet",
+      "devDesc": "MGate sign-in currently uses the password only: a one-time code is neither requested nor verified at login. Enabling 2FA now would not make your account safer, so it is temporarily unavailable. Use a long unique password and separate app passwords for mail clients.",
+      "storedTitle": "A TOTP secret is stored",
+      "storedDesc": "A TOTP secret was stored for your account earlier. It is not used at sign-in. You can remove it.",
+      "remove": "Remove secret",
+      "removeConfirm": "Remove the stored TOTP secret?",
+      "removeFailed": "Could not remove the stored secret."
+    },
+    "appPasswords": {
+      "create": "Create App Password",
+      "hint": "App passwords let third-party email clients (Apple Mail, Thunderbird, Outlook) connect via IMAP/SMTP with a separate password that you can revoke without changing your main password.",
+      "name": "Application Name",
+      "created": "Created",
+      "lastUsed": "Last Used",
+      "never": "Never",
+      "empty": "No app passwords configured.",
+      "createTitle": "New App Password",
+      "labelField": "Label (e.g. Thunderbird on Laptop)",
+      "generatedTitle": "App Password Created",
+      "generatedWarning": "Copy this password right now. For security reasons it will never be displayed again:"
+    },
+    "sessions": {
+      "webTitle": "Active Web Sessions",
+      "webDesc": "List of active web sessions. Terminating a session immediately revokes access token.",
+      "device": "Device / Browser",
+      "unknownDevice": "Unknown Device",
+      "current": "Current Session",
+      "ip": "IP Address",
+      "started": "Session Started",
+      "terminate": "Terminate",
+      "empty": "No active web sessions found.",
+      "imapTitle": "Mail Connections (IMAP / SMTP)",
+      "imapDesc": "Third-party client connections are handled by Dovecot IMAP. To revoke access, use App Passwords."
+    },
+    "vacation": {
+      "title": "Vacation Auto-Reply",
+      "enableCheckbox": "Enable automatic reply to incoming messages",
+      "hint": "The mail server will automatically send this response to each new sender via Sieve Pigeonhole.",
+      "startDate": "Start Date (inclusive)",
+      "endDate": "End Date (inclusive)",
+      "subject": "Reply Subject",
+      "body": "Message Text"
+    },
+    "filters": {
+      "create": "Create Filter",
+      "hint": "Server filters automatically organize incoming mail upon delivery using Sieve rules.",
+      "name": "Rule Name",
+      "empty": "No filters configured.",
+      "newTitle": "New Filter Rule",
+      "ruleName": "Rule Name",
+      "conditionTitle": "Condition",
+      "actionTitle": "Action"
+    },
+    "forwarding": {
+      "title": "Email Forwarding",
+      "hint": "All incoming mail will automatically forward to the destination address.",
+      "destination": "Forwarding Address",
+      "keepCopy": "Keep a copy in this mailbox",
+      "disable": "Disable Forwarding"
+    }
+  },
+  "extensions": {
+    "proFeature": {
+      "title": "Pro feature",
+      "description": "This capability is disabled in the Community edition. Upgrade to Pro to enable it.",
+      "cta": "Go to license"
+    }
+  },
+  "system": {
+    "updateRequired": "This interface build is out of date. Refresh the page (Ctrl+Shift+R) to get the latest version."
+  },
+  "proUi": {
+    "backToAdmin": "Back to admin panel",
+    "backToPro": "Back to Pro features",
+    "notFound": "Feature not found.",
+    "implementedSoon": "This feature is coming soon.",
+    "inDevelopment": {
+      "title": "Feature in development",
+      "description": "This Pro feature is not implemented yet and does not work: the server answers its requests with 501 (not implemented). It will arrive in a future release; there is nothing to configure for it."
+    },
+    "backlogBadge": "In development",
+    "activeBadge": "Available",
+    "nav": {
+      "overview": "Pro features"
+    },
+    "overview": {
+      "description": "Pro edition features. Those marked \"In development\" do not work yet."
+    },
+    "dashboard": {
+      "teaser": "Extended deliverability charts and load forecast in development.",
+      "cta": "Details"
+    },
+    "settings": {
+      "title": "Pro",
+      "description": "Pro module settings. White-label branding is configured under Settings, White-Label tab; priority updates are in development.",
+      "productName": "Product name"
+    },
+    "features": {
+      "dnsAutopilot": {
+        "title": "DNS Autopilot",
+        "description": "A one-off sync of MX/SPF/DKIM/DMARC/MTA-STS records via the Cloudflare or Selectel API using the \"Autoconfigure\" button in the domain DNS wizard is available in every edition. Automatic background reconciliation (the Pro part) is in development."
+      },
+      "advancedDashboard": {
+        "title": "Advanced dashboard",
+        "description": "Deliverability charts, queue forecast, and capacity planning on admin dashboard. In development."
+      },
+      "backupCenter": {
+        "title": "Backup center",
+        "description": "Managed backup with storage health checks and recovery rehearsal. In development; use the Community restic backups for now (docs/BACKUP.md)."
+      },
+      "branding": {
+        "title": "White-Label Branding",
+        "description": "Custom product name and logo in the interface header and the browser tab title. Favicon, accent color, support link and footer are saved but not displayed yet."
+      },
+      "dmarcIntelligence": {
+        "title": "DMARC Intelligence",
+        "description": "Full source IP addresses from DMARC reports, history up to 90 days, and raw XML RUA report downloads. Included with any Pro lease; there is no separate switch. Reports are uploaded manually."
+      },
+      "multiTenantRbac": {
+        "title": "Multi-Tenant RBAC & Quotas",
+        "description": "Advanced multi-tenancy and role model beyond the basic domain admins and quotas (available in Community). In development."
+      },
+      "priorityUpdates": {
+        "title": "Priority updates",
+        "description": "Early access to new mgate releases before public Community release. In development."
+      }
+    }
+  }
+}

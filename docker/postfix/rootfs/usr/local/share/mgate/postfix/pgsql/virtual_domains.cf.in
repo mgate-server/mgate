@@ -1,0 +1,3 @@
+# v_postfix_virtual_domains(domain citext): every non-disabled domain (suspended ones included,
+# so the policy service can answer 4xx instead of "relay access denied").
+query = SELECT domain FROM v_postfix_virtual_domains WHERE domain = '%s'

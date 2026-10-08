@@ -1,0 +1,270 @@
+{{/*
+NetworkPolicies reproducing the compose `public` vs `backend: internal: true` segmentation. Each backend-only component gets an Ingress-only NetworkPolicy naming its known
+in-cluster clients by component label; api/webmail/postfix/dovecot additionally get a rule opening
+their public-facing ports to any source (the ingress controller / LoadBalancer, which NetworkPolicy
+sees as an ordinary source, not a selectable Pod, hence rules with NO `from` at all — the API
+rejects an empty peer `from: [{}]` with "must specify a peer"). No Egress rules are rendered by
+default — the compose "internal: true" backend network mainly matters for INGRESS isolation of
+postgres/valkey/etc from the internet. The optional DNS-only Egress policy below
+(networkPolicy.allowDnsEgress, default false) egress-isolates EVERY release pod, so it is only
+useful together with complete operator-supplied egress rules; per-component egress lockdown is
+TODO(S8) once every component's real egress needs are verified against the real docker/* images.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $root := . }}
+{{- if .Values.networkPolicy.allowDnsEgress }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-allow-dns-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector: {} # any namespace; most clusters run CoreDNS as ClusterIP anyway
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "postgres") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "api") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "webmail") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "worker") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "postfix") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "dovecot") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "migrate") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "backup") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-valkey
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "valkey") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "valkey") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "api") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "webmail") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "worker") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "rspamd") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 6379 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-rspamd
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "rspamd") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "rspamd") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "postfix") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "api") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "worker") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 11332 }
+        - { protocol: TCP, port: 11333 }
+        - { protocol: TCP, port: 11334 }
+{{- if .Values.clamav.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-clamav
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "clamav") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "clamav") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "rspamd") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 3310 }
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-unbound
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "unbound") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "unbound") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-postfix
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "postfix") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "postfix") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    # Public mail ports: reached via the LoadBalancer Service, which NetworkPolicy sees as coming
+    # from outside any selectable Pod — a rule without `from` means "any source" (an empty peer
+    # `from: [{}]` is rejected by the API server: "must specify a peer").
+    - ports:
+        - { protocol: TCP, port: 25 }
+        - { protocol: TCP, port: 465 }
+        - { protocol: TCP, port: 587 }
+    # Internal submission for the webmail gateway: no per-client-IP rate limits on this listener
+    # and the gateway's credentials are accepted only here, so only webmail pods may reach it
+    # (never exposed by the public Service either).
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "webmail") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 2587 }
+    # mgate-agent control API — backend only.
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "api") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "worker") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 7070 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-dovecot
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "dovecot") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "dovecot") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    # public mail ports via the LoadBalancer Service, see postfix policy above
+    - ports:
+        - { protocol: TCP, port: 143 }
+        - { protocol: TCP, port: 993 }
+        - { protocol: TCP, port: 110 }
+        - { protocol: TCP, port: 995 }
+        - { protocol: TCP, port: 4190 }
+    # Internal IMAP listener for the webmail gateway: the gateway's credentials are accepted
+    # only here, so only webmail pods may reach it (never exposed by the public Service either).
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "webmail") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 1143 }
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "postfix") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 24 }    # LMTP
+        - { protocol: TCP, port: 12345 } # SASL auth
+        - { protocol: TCP, port: 12340 } # quota-status policy
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "api") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "worker") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8080 } # doveadm HTTP API
+        - { protocol: TCP, port: 9900 } # openmetrics
+        - { protocol: TCP, port: 7070 } # mgate-agent control
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    # public REST API + /.well-known, via the Ingress controller
+    - ports:
+        - { protocol: TCP, port: 8080 }
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "dovecot") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "rspamd") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "worker") | nindent 8 }}
+        {{- include "mgate.npPeer" (dict "root" $root "component" "backup") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8081 } # /internal/v1/*, /metrics
+    - from:
+        {{- include "mgate.npPeer" (dict "root" $root "component" "postfix") | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 10040 } # Postfix policy delegation
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-webmail
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "webmail") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "webmail") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    # public webmail REST+WS via the Ingress controller
+    - ports:
+        - { protocol: TCP, port: 8082 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" . }}-web
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" . "component" "web") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mgate.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    # public SPA (catch-all route) via the Ingress controller
+    - ports:
+        - { protocol: TCP, port: 8080 }
+{{- range $policy := .Values.networkPolicy.extraPolicies }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mgate.fullname" $root }}-{{ $policy.name }}
+  namespace: {{ $root.Release.Namespace }}
+  labels: {{- include "mgate.labels" (dict "root" $root "component" "") | nindent 4 }}
+spec:
+  {{- omit $policy "name" | toYaml | nindent 2 }}
+{{- end }}
+{{- end }}

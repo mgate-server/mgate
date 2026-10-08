@@ -1,0 +1,116 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "mgate.fullname" . }}-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "backup") | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "mgate.selectorLabels" (dict "root" . "component" "backup") | nindent 12 }}
+        spec:
+          serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+          restartPolicy: OnFailure
+          # Root (the backup image's default user) with a single capability, see values.yaml
+          # `backup` and docker/backup/Dockerfile: vmail is 5000:5000 with private Maildirs.
+          securityContext:
+            {{- include "mgate.podSecurityContext" (dict "root" . "override" (dict "runAsNonRoot" false "runAsUser" 0 "runAsGroup" 0)) | nindent 12 }}
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: backup
+              image: {{ include "mgate.image" (dict "root" . "repository" .Values.backup.image.repository "tag" .Values.backup.image.tag) }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              # docker/backup/backup.sh (shared with the compose setup): `pg_dump` of PostgreSQL +
+              # restic snapshot of the dump, vmail and (certs.mode=mgate) the certificate files;
+              # then the retention policy; reports the outcome to the internal API.
+              args: ["/usr/local/bin/backup.sh"]
+              envFrom:
+                - configMapRef:
+                    name: {{ include "mgate.configMapName" . }}
+                - secretRef:
+                    name: {{ include "mgate.secretsName" . }}
+              env:
+                # backup.sh reads PGHOST/PGPORT (the ConfigMap's POSTGRES_HOST/PORT are for the
+                # mail daemons) — without them it would always dial the bundled "postgres".
+                - { name: PGHOST, value: {{ include "mgate.postgresHost" . | quote }} }
+                - { name: PGPORT, value: {{ include "mgate.postgresPort" . | quote }} }
+                {{- if and (not .Values.postgresql.enabled) .Values.externalDatabase.sslmode }}
+                - { name: PGSSLMODE, value: {{ .Values.externalDatabase.sslmode | quote }} }
+                {{- end }}
+                {{- if and (not .Values.postgresql.enabled) .Values.externalDatabase.existingSecret }}
+                # External database: the chart's Secret carries no POSTGRES_PASSWORD then.
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.externalDatabase.existingSecret }}
+                      key: {{ .Values.externalDatabase.existingSecretPasswordKey }}
+                {{- end }}
+                - { name: RESTIC_REPOSITORY, value: {{ .Values.backup.restic.repository | quote }} }
+                - { name: BACKUP_KEEP_DAILY, value: {{ .Values.backup.restic.keepDaily | quote }} }
+                - { name: BACKUP_KEEP_WEEKLY, value: {{ .Values.backup.restic.keepWeekly | quote }} }
+                - { name: BACKUP_KEEP_MONTHLY, value: {{ .Values.backup.restic.keepMonthly | quote }} }
+              securityContext:
+                {{- include "mgate.securityContext" (dict "root" . "override" (dict "capabilities" (dict "drop" (list "ALL") "add" (list "DAC_OVERRIDE")))) | nindent 16 }}
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+              volumeMounts:
+                - { name: vmail, mountPath: /var/vmail, readOnly: true }
+                {{- if eq .Values.certs.mode "mgate" }}
+                - { name: certs, mountPath: /certs, readOnly: true }
+                {{- end }}
+                {{- if .Values.backup.persistence.enabled }}
+                - { name: backups, mountPath: /backups }
+                {{- end }}
+          volumes:
+            # NOTE: vmail is normally an RWO PVC (see dovecot.persistence.accessMode) — a shared
+            # mount here only works if the CSI driver allows multi-attach same-node, or when
+            # dovecot.persistence.accessMode has been switched to ReadWriteMany (TODO(S8)).
+            # Alternative not yet implemented: run backup.sh's Maildir step via doveadm
+            # backup/dsync against dovecot's doveadm HTTP API instead of a shared volume.
+            - name: vmail
+              persistentVolumeClaim:
+                # StatefulSet volumeClaimTemplate "vmail" on "<fullname>-dovecot" (ordinal 0) is
+                # named "vmail-<fullname>-dovecot-0" by the StatefulSet controller.
+                claimName: vmail-{{ include "mgate.fullname" . }}-dovecot-0
+            {{- if eq .Values.certs.mode "mgate" }}
+            - name: certs
+              persistentVolumeClaim:
+                claimName: {{ include "mgate.certsPvcName" . }}
+            {{- end }}
+            {{- if .Values.backup.persistence.enabled }}
+            - name: backups
+              persistentVolumeClaim:
+                claimName: {{ include "mgate.fullname" . }}-backups
+            {{- end }}
+---
+{{- if .Values.backup.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mgate.fullname" . }}-backups
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "backup") | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.persistence.size }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest new functionality or an improvement for MGate.
+title: "feat: <short summary>"
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please check `docs/ROADMAP.md` — the feature you have
+        in mind may already be planned, in which
+        case a 👍 on the existing roadmap item is more useful than a
+        duplicate request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation/pain point, not just the proposed feature.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like to see? Sketches, example config/API shapes welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you're using today, or other approaches you considered.
+
+  - type: dropdown
+    id: edition
+    attributes:
+      label: Is this Community-appropriate, or does it make sense as a Pro feature?
+      description: >-
+        See docs/LICENSING.md for the Community/Pro split. It's fine to say
+        "not sure" — this just helps triage.
+      options:
+        - Community (core mail platform functionality)
+        - Could be Pro-only (advanced/enterprise-oriented)
+        - Not sure
+    validations:
+      required: true

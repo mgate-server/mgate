@@ -1,0 +1,88 @@
+name: Bug report
+description: Something in MGate isn't working as documented.
+title: "fix: <short summary>"
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please do NOT use this
+        form for security vulnerabilities — see `SECURITY.md` instead.
+        Some functionality is intentionally not implemented yet
+        (`TODO(S<N>)` markers in the code); please check `docs/ROADMAP.md`
+        first in case what you're seeing is already known.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: "`MGATE_VERSION` from your .env (e.g. 2026.10.1), or the git commit you built from."
+      placeholder: 2026.10.1 or commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      multiple: true
+      options:
+        - api
+        - worker
+        - webmail
+        - postfix
+        - dovecot
+        - rspamd
+        - clamav
+        - traefik
+        - unbound
+        - backup
+        - firewall
+        - web (admin/account/mail SPA)
+        - docker-compose / Makefile
+        - Helm chart
+        - docs
+        - other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you observe instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. `make init` with ...
+        2. `docker compose up -d`
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >-
+        `docker compose logs <service>` output, or `make validate-configs`
+        output. Please REDACT secrets (MGATE_INTERNAL_TOKEN, passwords,
+        DOVEADM_API_KEY, RSPAMD_CONTROLLER_PASSWORD, etc.) before pasting.
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        - Host OS / kernel:
+        - docker version / docker compose version:
+        - COMPOSE_PROFILES:
+        - Deployment method (compose / Helm / built from source):
+    validations:
+      required: true

@@ -1,0 +1,135 @@
+#!/bin/bash
+# Render the runtime part of the Postfix configuration from the environment.
+# Runs once per container start as the s6-rc oneshot "mgate-init" (before mgate-agent and
+# postfix). Idempotent: safe to re-run by hand (`mgate-postfix-init`) for debugging.
+set -euo pipefail
+
+# shellcheck disable=SC2034 # read by common.sh
+MGATE_COMPONENT=postfix
+# shellcheck source=/dev/null
+. /usr/local/lib/mgate/common.sh
+
+require_env MGATE_HOSTNAME POSTGRES_MAIL_PASSWORD
+
+: "${POSTGRES_HOST:=postgres}"
+: "${POSTGRES_PORT:=5432}"
+: "${POSTGRES_DB:=mgate}"
+: "${POSTGRES_MAIL_USER:=mgate_mail}"
+: "${MGATE_MESSAGE_SIZE_LIMIT:=52428800}"
+: "${MGATE_BACKEND_SUBNET:=172.30.1.0/24}"
+: "${MGATE_RELAYHOST:=}"
+: "${MGATE_ADMIN_EMAIL:=}"
+: "${MGATE_LOG_STDOUT:=0}"
+: "${MGATE_SPAMHAUS_DQS_KEY:=}"
+# Clients allowed on the internal webmail submission listener 2587 (comma/space separated CIDRs).
+: "${MGATE_WEBMAIL_CLIENT_NETS:=$MGATE_BACKEND_SUBNET}"
+
+[[ "$MGATE_HOSTNAME" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] \
+    || die "MGATE_HOSTNAME must be a fully qualified domain name (got '$MGATE_HOSTNAME')"
+is_uint "$MGATE_MESSAGE_SIZE_LIMIT" || die "MGATE_MESSAGE_SIZE_LIMIT must be an integer (bytes)"
+is_uint "$POSTGRES_PORT" || die "POSTGRES_PORT must be an integer"
+[[ "$MGATE_BACKEND_SUBNET" =~ ^[0-9a-fA-F:.]+/[0-9]{1,3}$ ]] \
+    || die "MGATE_BACKEND_SUBNET must be a CIDR (got '$MGATE_BACKEND_SUBNET')"
+read -r -a webmail_nets <<<"${MGATE_WEBMAIL_CLIENT_NETS//,/ }"
+[ "${#webmail_nets[@]}" -gt 0 ] || die "MGATE_WEBMAIL_CLIENT_NETS must list at least one CIDR"
+for net in "${webmail_nets[@]}"; do
+    # IPv6 networks are written without brackets here (CIDR table syntax), e.g. fd00:1::/64.
+    [[ "$net" =~ ^[0-9a-fA-F:.]+/[0-9]{1,3}$ ]] \
+        || die "MGATE_WEBMAIL_CLIENT_NETS must be a list of CIDRs (got '$net')"
+done
+
+# --- main.cf (environment-dependent values) -------------------------------------------------
+settings=(
+    "myhostname=$MGATE_HOSTNAME"
+    "mydomain=${MGATE_HOSTNAME#*.}"
+    "mynetworks=127.0.0.0/8 $MGATE_BACKEND_SUBNET"
+    "message_size_limit=$MGATE_MESSAGE_SIZE_LIMIT"
+    "relayhost=$MGATE_RELAYHOST"
+)
+if [ -n "$MGATE_RELAYHOST" ]; then
+    # Relay targets are usually compose/k8s service names: allow /etc/hosts + search domains.
+    settings+=("smtp_host_lookup=dns, native")
+else
+    settings+=("smtp_host_lookup=dns")
+fi
+case "$MGATE_LOG_STDOUT" in
+    1|true|yes) settings+=("maillog_file=/dev/stdout") ;;
+    *)          settings+=("maillog_file=") ;;
+esac
+if [ -n "$MGATE_SPAMHAUS_DQS_KEY" ]; then
+    [[ "$MGATE_SPAMHAUS_DQS_KEY" =~ ^[A-Za-z0-9]+$ ]] \
+        || die "MGATE_SPAMHAUS_DQS_KEY must be alphanumeric (got '$MGATE_SPAMHAUS_DQS_KEY')"
+    settings+=(
+        "postscreen_dnsbl_sites=${MGATE_SPAMHAUS_DQS_KEY}.zen.dq.spamhaus.net=127.0.0.[2..11]*3 bl.spamcop.net=127.0.0.2*2 psbl.surriel.com=127.0.0.2*2 list.dnswl.org=127.0.[0..255].0*-1 list.dnswl.org=127.0.[0..255].1*-2 list.dnswl.org=127.0.[0..255].[2..3]*-4"
+        "postscreen_dnsbl_reply_map=regexp:/etc/postfix/postscreen_dnsbl_reply"
+    )
+    {
+        echo "# Rendered by mgate-postfix-init: mask Spamhaus DQS key in 550 rejection messages."
+        printf '/%s\\.zen\\.dq\\.spamhaus\\.net/\tzen.spamhaus.org\n' "$MGATE_SPAMHAUS_DQS_KEY"
+    } | write_file /etc/postfix/postscreen_dnsbl_reply 0644 root:root
+fi
+postconf -e "${settings[@]}"
+printf '%s\n' "$MGATE_HOSTNAME" >/etc/mailname
+
+# --- Authentication-Results headers that claim our authserv-id (header_checks) ---------------
+# The webmail gateway trusts the topmost Authentication-Results header whose authserv-id is
+# MGATE_HOSTNAME. Only Rspamd may add it (milter; not subject to header_checks), so any such
+# header already present in a message is removed (RFC 8601 section 5) - wherever the name appears
+# in the authserv-id part, i.e. before the first ";" (also after comments or quotes, any case,
+# with or without a trailing dot, folded or not). Rspamd's marker headers (X-Rspamd-Queue-Id,
+# X-Rspamd-Server) are removed the same way: the gateway trusts that header only in a message
+# carrying a marker, so a marker must come from the milter, never from the sender (it protects
+# the badge while Rspamd is down and milter_default_action = accept lets mail through).
+host_re="${MGATE_HOSTNAME//./\\.}"
+{
+    echo "# Rendered by mgate-postfix-init from MGATE_HOSTNAME - do not edit."
+    printf '%s\tIGNORE\n' \
+        "/^Authentication-Results[[:space:]]*:([^;]*[^-.[:alnum:]_])?${host_re}\\.?([^-.[:alnum:]_]|\$)/" \
+        "/^X-Rspamd-(Queue-Id|Server)[[:space:]]*:/"
+} | write_file /etc/postfix/authres_strip.regexp 0644 root:root
+
+# --- Clients of the internal webmail submission listener (2587) -----------------------------
+{
+    echo "# Rendered by mgate-postfix-init: loopback + MGATE_WEBMAIL_CLIENT_NETS - do not edit."
+    echo "# check_client_access on 2587 (anything else is rejected) and its anvil limit exceptions."
+    printf '%s\tOK\n' 127.0.0.0/8 "${webmail_nets[@]}"
+} | write_file /etc/postfix/webmail_clients.cidr 0644 root:root
+
+# --- system aliases for $myhostname (RFC 5321 postmaster, abuse) -----------------------------
+{
+    echo "# Rendered by mgate-postfix-init. RFC 2142 role addresses at \$myhostname."
+    if [ -n "$MGATE_ADMIN_EMAIL" ]; then
+        for role in postmaster abuse root hostmaster; do
+            printf '%s@%s\t%s\n' "$role" "$MGATE_HOSTNAME" "$MGATE_ADMIN_EMAIL"
+        done
+    fi
+} | write_file /etc/postfix/system_aliases 0644 root:root
+[ -n "$MGATE_ADMIN_EMAIL" ] || warn "MGATE_ADMIN_EMAIL is empty: postmaster@$MGATE_HOSTNAME is not routed"
+
+# --- pgsql lookup tables (credentials; 0640 root:postfix) ----------------------------------
+for tmpl in /usr/local/share/mgate/postfix/pgsql/*.cf.in; do
+    name="$(basename "$tmpl" .in)"
+    {
+        echo "# Rendered by mgate-postfix-init from $tmpl - do not edit."
+        echo "hosts = $POSTGRES_HOST:$POSTGRES_PORT"
+        echo "dbname = $POSTGRES_DB"
+        echo "user = $POSTGRES_MAIL_USER"
+        echo "password = $POSTGRES_MAIL_PASSWORD"
+        cat "$tmpl"
+    } | write_secret "/etc/postfix/pgsql/$name" postfix
+done
+chmod 0750 /etc/postfix/pgsql
+chown root:postfix /etc/postfix/pgsql
+
+# --- TLS -------------------------------------------------------------------------------------
+ensure_bootstrap_cert
+
+# --- Queue directory (named volume) + final validation -------------------------------------
+# `postfix check` creates missing queue directories itself. If it fails (e.g. a restored spool
+# with wrong ownership), repair once with set-permissions. Needs CAP_FOWNER (see docs).
+if ! postfix check >/dev/null 2>&1; then
+    warn "postfix check failed; running 'postfix set-permissions' to repair the queue directory"
+    postfix set-permissions || true
+fi
+postfix check || die "postfix check failed"
+log "configuration rendered for $MGATE_HOSTNAME (db $POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB)"

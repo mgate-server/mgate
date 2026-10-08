@@ -1,0 +1,83 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mgate.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "") | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- /*
+  TLS via a generic Ingress needs a k8s Secret (spec.tls[].secretName); that only exists for
+  certs.mode=cert-manager (the Certificate in templates/certs/certificate.yaml) or existingSecret.
+  mode=mgate issues certs to files on a PVC instead (matching the compose/Traefik-file-provider
+  design) — a generic Ingress cannot consume that directly. TODO(S8): document/ship
+  a Traefik IngressRoute variant (or a cert-sync sidecar) for mode=mgate + Ingress together; until
+  then, mode=mgate + ingress.enabled=true serves plaintext behind the ingress controller's own
+  default certificate, or you terminate TLS outside Kubernetes (an external LB) in front of it.
+  */}}
+  {{- if and .Values.ingress.tls.enabled (ne .Values.certs.mode "mgate") }}
+  tls:
+    - hosts:
+        - {{ .Values.config.hostname | quote }}
+        {{- range .Values.ingress.extraHosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-tls" (include "mgate.fullname" .)) }}
+  {{- end }}
+  rules:
+    # mail API -> webmail (most specific first), /api + /.well-known -> api,
+    # everything else -> web (the SPA). Path-based routing in a plain Ingress is evaluated in the
+    # order listed here (most controllers, incl. ingress-nginx/Traefik, match longest/most-specific
+    # prefix first regardless of list order, but the order below keeps the precedence obvious to a
+    # human reader too).
+    - host: {{ .Values.config.hostname | quote }}
+      http:
+        paths:
+          # Highest priority: webmail's REST+WS API.
+          - path: /api/v1/mail
+            pathType: Prefix
+            backend:
+              service:
+                name: webmail
+                port: { number: 8082 }
+          # Public REST API + internal well-known endpoints (ACME HTTP-01, autoconfig SRV/CNAME
+          # discovery paths served by `api`).
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port: { number: 8080 }
+          - path: /.well-known
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port: { number: 8080 }
+          # Catch-all: the SPA (nginx `web` image serves the built React app + /config.json).
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port: { number: 8080 }
+    {{- range .Values.ingress.extraHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port: { number: 8080 }
+    {{- end }}
+{{- end }}

@@ -1,0 +1,12 @@
+#!/command/with-contenv bash
+# Postfix master in the foreground, supervised by s6. Logs go to /dev/log (mgate-agent),
+# unless MGATE_LOG_STDOUT=1 (maillog_file=/dev/stdout, see mgate-postfix-init).
+# shellcheck disable=SC2034 # read by common.sh
+MGATE_COMPONENT=postfix
+# shellcheck source=/dev/null
+. /usr/local/lib/mgate/common.sh
+case "${MGATE_LOG_STDOUT:-0}" in
+    1|true|yes) ;;
+    *) wait_for_syslog_socket 15 || true ;;
+esac
+exec /usr/sbin/postfix start-fg

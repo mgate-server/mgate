@@ -1,0 +1,22 @@
+{
+  "name": "@mgate/extensions",
+  "private": true,
+  "version": "2026.10.1",
+  "description": "Extension SDK + registry: types, the runtime registry, and the <ProFeature> gate the SPA's Pro pages (apps/spa/src/pro) are built against. Consumed as TS source directly, no build step.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mgate/ui": "*",
+    "react": "19.3.0",
+    "react-i18next": "17.0.13",
+    "react-router-dom": "7.18.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "typescript": "5.9.3"
+  }
+}

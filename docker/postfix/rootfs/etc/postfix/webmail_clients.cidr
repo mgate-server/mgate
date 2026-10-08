@@ -1,0 +1,4 @@
+# Clients allowed on the internal webmail submission listener 2587 (check_client_access) and
+# exempt from its anvil limits. Placeholder (loopback only): mgate-postfix-init overwrites this
+# file at container start with loopback + MGATE_WEBMAIL_CLIENT_NETS (default MGATE_BACKEND_SUBNET).
+127.0.0.0/8	OK

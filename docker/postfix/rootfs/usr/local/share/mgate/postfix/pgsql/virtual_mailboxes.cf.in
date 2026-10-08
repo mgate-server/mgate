@@ -1,0 +1,3 @@
+# v_postfix_virtual_mailboxes(address citext, maildir text): active mailboxes. Used for
+# recipient validation only; delivery goes to Dovecot LMTP (virtual_transport).
+query = SELECT maildir FROM v_postfix_virtual_mailboxes WHERE address = '%s'

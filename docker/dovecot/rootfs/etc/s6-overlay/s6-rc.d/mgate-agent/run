@@ -1,0 +1,4 @@
+#!/command/with-contenv sh
+# mgate-agent: syslog server on /dev/log (-> stdout + Valkey stream mgate:logs), control API
+# on :7070 (health, reload), watcher on /certs/default (-> doveadm reload).
+exec /usr/local/bin/mgate-agent --role dovecot

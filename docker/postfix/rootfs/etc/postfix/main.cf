@@ -1,0 +1,224 @@
+# MGate Postfix main.cf (Postfix 3.10, Debian trixie).
+#
+# Baked into the image. Values that depend on the environment are set at container start by
+# /usr/local/bin/mgate-postfix-init via `postconf -e` (marked "rendered" below); do not edit a
+# running container's copy - change the image or the environment instead.
+# Reference: docs/mail/postfix.md.
+
+compatibility_level = 3.10
+
+# --- Identity (rendered) -------------------------------------------------------------------
+# rendered: MGATE_HOSTNAME
+myhostname = localhost.localdomain
+myorigin = $myhostname
+mydomain = localdomain
+smtpd_banner = $myhostname ESMTP
+# All mail domains are virtual (PostgreSQL). Local delivery is disabled on purpose.
+mydestination =
+local_recipient_maps =
+local_transport = error:5.1.1 local delivery is disabled
+alias_maps =
+alias_database =
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+enable_long_queue_ids = yes
+# IPv4 only: outbound IPv6 needs its own PTR/SPF alignment before it may be enabled.
+# TODO(S1): make IPv6 opt-in via env once compose/Helm expose IPv6 networking.
+inet_protocols = ipv4
+inet_interfaces = all
+
+# rendered: loopback + MGATE_BACKEND_SUBNET (internal compose network; trusted to relay).
+mynetworks = 127.0.0.0/8
+# rendered: MGATE_RELAYHOST (dev: [mailpit]:1025; empty = direct MX delivery)
+relayhost =
+
+# --- Logging ---------------------------------------------------------------------------------
+# Default: syslog to /dev/log, served by mgate-agent (echo to stdout + Valkey stream mgate:logs).
+# rendered: MGATE_LOG_STDOUT=1 sets maillog_file = /dev/stdout (via postlogd) for debugging.
+syslog_name = postfix
+syslog_facility = mail
+maillog_file =
+
+# --- Virtual domains (PostgreSQL views, role mgate_mail; files rendered with credentials) ------
+virtual_mailbox_domains = proxy:pgsql:/etc/postfix/pgsql/virtual_domains.cf
+virtual_mailbox_maps = proxy:pgsql:/etc/postfix/pgsql/virtual_mailboxes.cf
+# system_aliases (rendered): postmaster/abuse/root@$myhostname -> MGATE_ADMIN_EMAIL.
+virtual_alias_maps = texthash:/etc/postfix/system_aliases, proxy:pgsql:/etc/postfix/pgsql/virtual_aliases.cf
+# $myhostname is a virtual alias domain so RFC 5321 postmaster@<host> is accepted and routed.
+virtual_alias_domains = $myhostname
+virtual_transport = lmtp:inet:dovecot:24
+smtpd_sender_login_maps = proxy:pgsql:/etc/postfix/pgsql/sender_login.cf
+recipient_delimiter = +
+lmtp_host_lookup = native
+lmtp_tls_security_level = none
+
+# rendered: MGATE_MESSAGE_SIZE_LIMIT
+message_size_limit = 52428800
+mailbox_size_limit = 0
+smtputf8_enable = yes
+
+# --- Anti-abuse / limits (anvil) -------------------------------------------------------------
+anvil_rate_time_unit = 60s
+smtpd_client_connection_count_limit = 20
+smtpd_client_connection_rate_limit = 60
+smtpd_client_message_rate_limit = 120
+smtpd_client_recipient_rate_limit = 600
+smtpd_client_new_tls_session_rate_limit = 120
+smtpd_client_auth_rate_limit = 30
+smtpd_client_event_limit_exceptions = $mynetworks
+smtpd_soft_error_limit = 5
+smtpd_hard_error_limit = 15
+smtpd_error_sleep_time = 1s
+smtpd_recipient_limit = 1000
+smtpd_timeout = 300s
+disable_vrfy_command = yes
+smtpd_helo_required = yes
+strict_rfc821_envelopes = yes
+# SMTP smuggling defense (CVE-2023-51764); keep exclusions for internal senders only.
+smtpd_forbid_bare_newline = normalize
+smtpd_forbid_bare_newline_exclusions = $mynetworks
+smtpd_forbid_unauth_pipelining = yes
+
+# --- postscreen (port 25) --------------------------------------------------------------------
+# DNSBL queries go through unbound (MGATE_RESOLVER_IP): public resolvers are refused by
+# Spamhaus and friends. Weights: block at score >= 3; DNSWL entries subtract.
+postscreen_access_list = permit_mynetworks, cidr:/etc/postfix/postscreen_access.cidr
+postscreen_denylist_action = drop
+postscreen_greet_action = enforce
+postscreen_greet_wait = ${stress?{2}:{6}}s
+postscreen_dnsbl_action = enforce
+postscreen_dnsbl_threshold = 3
+postscreen_dnsbl_allowlist_threshold = -2
+postscreen_dnsbl_timeout = 10s
+postscreen_dnsbl_sites =
+    zen.spamhaus.org=127.0.0.[2..11]*3
+    bl.spamcop.net=127.0.0.2*2
+    psbl.surriel.com=127.0.0.2*2
+    list.dnswl.org=127.0.[0..255].0*-1
+    list.dnswl.org=127.0.[0..255].1*-2
+    list.dnswl.org=127.0.[0..255].[2..3]*-4
+# Spamhaus DQS key support: if MGATE_SPAMHAUS_DQS_KEY is set, mgate-postfix-init configures
+# postscreen_dnsbl_sites with <key>.zen.dq.spamhaus.net and postscreen_dnsbl_reply_map to mask the key.
+# Deep protocol tests defer the first delivery of every new client; enable per operator choice.
+postscreen_pipelining_enable = no
+postscreen_non_smtp_command_enable = no
+postscreen_bare_newline_enable = no
+postscreen_cache_map = btree:$data_directory/postscreen_cache
+postscreen_client_connection_count_limit = $smtpd_client_connection_count_limit
+# TODO(S8): postscreen_upstream_proxy_protocol = haproxy behind a TCP load balancer (k8s).
+
+# --- SMTP server restrictions (port 25; submission overrides via master.cf) ------------------
+smtpd_sasl_auth_enable = no
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = inet:dovecot:12345
+smtpd_sasl_security_options = noanonymous, noplaintext
+smtpd_sasl_tls_security_options = noanonymous
+smtpd_sasl_authenticated_header = no
+smtpd_sasl_local_domain =
+broken_sasl_auth_clients = no
+
+smtpd_client_restrictions = permit_mynetworks
+smtpd_helo_restrictions = permit_mynetworks, reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname
+smtpd_sender_restrictions = permit_mynetworks, reject_non_fqdn_sender, reject_unknown_sender_domain
+smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
+# api:10040 (backend policy service): rate limits, suspended_license domains (-> 450), list send rights.
+# dovecot:12340 (quota-status): reject over-quota recipients at RCPT time.
+smtpd_recipient_restrictions =
+    reject_non_fqdn_recipient,
+    reject_unknown_recipient_domain,
+    reject_unlisted_recipient,
+    $mgate_policy_inbound,
+    $mgate_policy_quota
+smtpd_data_restrictions = reject_unauth_pipelining, reject_multi_recipient_bounce
+
+# Policy services. Fail open on inbound (api unavailable must not bounce mail); submission uses
+# $mgate_policy_submission which tempfails instead (never relay without rate limiting).
+mgate_policy_inbound = check_policy_service { inet:api:10040, timeout=10s, max_idle=300s, max_ttl=1000s, try_limit=2, default_action=DUNNO }
+mgate_policy_submission = check_policy_service { inet:api:10040, timeout=10s, max_idle=300s, max_ttl=1000s, try_limit=2, { default_action = 451 4.3.5 Policy service unavailable; try again later } }
+mgate_policy_quota = check_policy_service { inet:dovecot:12340, timeout=10s, max_idle=300s, try_limit=2, default_action=DUNNO }
+
+# Submission (587/465) restriction sets, referenced from master.cf.
+mua_client_restrictions = permit_sasl_authenticated, reject
+# Internal webmail submission (2587, master.cf): only clients listed in the rendered CIDR table
+# may connect (loopback + MGATE_WEBMAIL_CLIENT_NETS, default MGATE_BACKEND_SUBNET); the same
+# table lists the clients exempt from the anvil limits there. With smtpd_delay_reject = no on
+# that listener the client check runs at connect time, i.e. before AUTH.
+mgate_webmail_clients = cidr:/etc/postfix/webmail_clients.cidr
+mua_webmail_client_restrictions = check_client_access $mgate_webmail_clients, reject
+mua_helo_restrictions = permit
+mua_sender_restrictions = reject_non_fqdn_sender, reject_sender_login_mismatch, permit_sasl_authenticated, reject
+mua_relay_restrictions = permit_sasl_authenticated, reject
+mua_recipient_restrictions = reject_non_fqdn_recipient, $mgate_policy_submission, $mgate_policy_quota, permit_sasl_authenticated, reject
+mua_end_of_data_restrictions = $mgate_policy_submission
+
+# --- Milter (Rspamd proxy worker: spam checks, DKIM/ARC signing) ----------------------------
+smtpd_milters = inet:rspamd:11332
+non_smtpd_milters = $smtpd_milters
+milter_protocol = 6
+milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}
+milter_connect_timeout = 10s
+milter_command_timeout = 30s
+milter_content_timeout = 300s
+# Inbound: accept when rspamd is down (no mail loss). Submission overrides with tempfail so
+# unsigned (no DKIM) mail is never sent.
+milter_default_action = accept
+# Rspamd uses {daemon_name} as the authserv-id of the Authentication-Results header it adds, and
+# the webmail gateway trusts only the topmost A-R header carrying MGATE_HOSTNAME. Keep it at
+# $myhostname (rendered from MGATE_HOSTNAME) for port 25 and locally generated mail; submission
+# listeners override it with ORIGINATING (master.cf).
+milter_macro_daemon_name = $myhostname
+
+# --- Header checks (cleanup) -----------------------------------------------------------------
+# RFC 8601 section 5: drop Authentication-Results headers that claim this server's authserv-id,
+# and Rspamd's marker headers (X-Rspamd-Queue-Id/-Server), before Rspamd adds its own. The table
+# is rendered at start from MGATE_HOSTNAME; headers added by a milter are not subject to
+# header_checks, so Rspamd's own headers survive. The cleanup-submission service (587/465/2587)
+# uses its own list that includes this table.
+header_checks = regexp:/etc/postfix/authres_strip.regexp
+
+# --- TLS: server -----------------------------------------------------------------------------
+# /certs/default is written by mgate (ACME) or bootstrapped self-signed by the init script;
+# mgate-agent reloads postfix when it changes. Key file first, then its chain.
+smtpd_tls_chain_files = /certs/default/privkey.pem, /certs/default/fullchain.pem
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtpd_tls_protocols = >=TLSv1.2
+smtpd_tls_mandatory_protocols = >=TLSv1.2
+# Port 25 is opportunistic (the alternative is plaintext): "medium". Submission is mandatory TLS
+# and uses smtpd_tls_mandatory_ciphers = high (Mozilla "intermediate" list below).
+smtpd_tls_ciphers = medium
+smtpd_tls_mandatory_ciphers = high
+smtpd_tls_exclude_ciphers = aNULL, eNULL, EXPORT, DES, 3DES, RC4, MD5, PSK, SRP, DSS, CAMELLIA, IDEA, SEED
+tls_high_cipherlist = ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305
+# TLS 1.3 is negotiated first whenever the peer supports it (OpenSSL 3.5); cipher preference
+# only matters for TLS 1.2 and follows the client (Mozilla intermediate guidance).
+tls_preempt_cipherlist = no
+tls_ssl_options = NO_RENEGOTIATION
+smtpd_tls_loglevel = 1
+smtpd_tls_received_header = yes
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+
+# --- TLS: client (outbound) ------------------------------------------------------------------
+# DANE when the destination publishes DNSSEC-signed TLSA records, otherwise opportunistic TLS.
+# Requires a validating resolver (unbound) and the AD bit reaching Postfix (compose: dns_opt
+# trust-ad). Check the log for "dnssec_probe" warnings.
+smtp_dns_support_level = dnssec
+smtp_tls_security_level = dane
+smtp_tls_protocols = >=TLSv1.2
+smtp_tls_mandatory_protocols = >=TLSv1.2
+smtp_tls_ciphers = medium
+smtp_tls_exclude_ciphers = aNULL, eNULL, EXPORT, DES, 3DES, RC4, MD5
+smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+smtp_tls_loglevel = 1
+smtp_tls_note_starttls_offer = yes
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+# TODO(S1): MTA-STS (RFC 8461) via smtp_tls_policy_maps = socketmap:... (mta-sts resolver).
+smtp_tls_policy_maps =
+
+# --- Queue / bounces -------------------------------------------------------------------------
+maximal_queue_lifetime = 5d
+bounce_queue_lifetime = 5d
+delay_warning_time = 4h
+notify_classes = resource, software
+# TODO(S1): RU/EN bounce and delay templates (bounce_template_file = /etc/postfix/bounce.cf).

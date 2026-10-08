@@ -1,0 +1,31 @@
+[Unit]
+Description=MGate mail platform (docker compose)
+Documentation=https://github.com/mgate-server/mgate
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Adjust to the actual checkout path, e.g. /opt/mgate or /srv/mgate. See docs/DEPLOYMENT.md
+# for the install procedure — this unit only wraps `docker compose` lifecycle commands, it does
+# not itself clone the repo, generate .env or run `make init`. It uses `-f docker-compose.yml`
+# explicitly, so a local docker-compose.override.yml is NOT loaded; append
+# `-f docker-compose.override.yml` to every command below if you keep one.
+WorkingDirectory=/opt/mgate
+EnvironmentFile=-/opt/mgate/.env
+
+ExecStartPre=/usr/bin/docker compose -f docker-compose.yml pull --quiet
+ExecStart=/usr/bin/docker compose -f docker-compose.yml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.yml down
+ExecReload=/usr/bin/docker compose -f docker-compose.yml restart
+
+TimeoutStartSec=300
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

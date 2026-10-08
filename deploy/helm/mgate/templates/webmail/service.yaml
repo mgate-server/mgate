@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  # Bare Service name — see templates/api/service.yaml comment (hostname parity with compose).
+  name: webmail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "webmail") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "mgate.selectorLabels" (dict "root" . "component" "webmail") | nindent 4 }}
+  ports:
+    - { name: http, port: 8082, targetPort: http, protocol: TCP }

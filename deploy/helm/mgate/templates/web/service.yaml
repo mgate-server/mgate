@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  # Bare Service name — see templates/api/service.yaml comment (hostname parity with compose);
+  # the Ingress backend below references it by this exact name.
+  name: web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "web") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "mgate.selectorLabels" (dict "root" . "component" "web") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http, protocol: TCP }

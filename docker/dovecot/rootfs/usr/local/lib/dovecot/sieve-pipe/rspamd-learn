@@ -1,0 +1,27 @@
+#!/bin/sh
+# Sieve pipe program (vnd.dovecot.pipe): feed the message on stdin to the Rspamd controller.
+# Usage (from report-spam.sieve / report-ham.sieve): rspamd-learn spam|ham
+# Runs as the vmail user inside an imap process. The controller password is rendered by
+# mgate-dovecot-init as a curl header file ("Password: ...", 0640 root:vmail) so it never
+# appears on a command line.
+set -eu
+
+case "${1:-}" in
+    spam) endpoint=learnspam ;;
+    ham)  endpoint=learnham ;;
+    *) echo "usage: rspamd-learn spam|ham" >&2; exit 64 ;;
+esac
+
+# Dovecot clears the environment of pipe programs, so the controller address is fixed here.
+url="http://rspamd:11334/$endpoint"
+header_file=/etc/dovecot/mgate/rspamd-controller.headers
+[ -r "$header_file" ] || { echo "rspamd-learn: $header_file not readable" >&2; exit 75; }
+
+# Never fail the IMAP MOVE because of learning problems: log and exit 0 on errors.
+# (Rspamd answers 208 when the message was already learned; curl -f treats 4xx/5xx only.)
+if ! curl -sS -f --max-time 30 -o /dev/null \
+        -H "@$header_file" \
+        --data-binary @- "$url"; then
+    echo "rspamd-learn: learning $1 via $url failed" >&2
+fi
+exit 0

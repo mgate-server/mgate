@@ -1,0 +1,10 @@
+# header_checks for the cleanup-submission service (ports 587/465, authenticated clients only).
+# Removes information about the sender's device/network before the message leaves the server.
+# POSIX regexp: "." also matches the newlines of folded (multi-line) headers.
+
+# The Received header Postfix adds for the authenticated client hop ("with ESMTPSA").
+/^Received:.*with ESMTPSA/      IGNORE
+# Client IP headers added by some MUAs/webmail software.
+/^X-Originating-IP:/            IGNORE
+/^X-Forwarded-For:/             IGNORE
+# TODO(S5): per-domain option to also strip User-Agent / X-Mailer (settings in the admin UI).

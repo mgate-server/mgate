@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mgate.fullname" . }}-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "migrate") | nindent 4 }}
+  annotations:
+    # post-install, NOT pre-install: Helm runs pre-install hooks before it creates any ordinary
+    # chart resource, and this Job needs several of them (ServiceAccount, ConfigMap, Secret via
+    # envFrom, and the bundled PostgreSQL StatefulSet/Service) — as a pre-install hook it could
+    # never start on a fresh install. On install, schema readiness is guaranteed by the `migrate`
+    # initContainer of api/webmail/worker instead (same image, plain `mgate migrate`, serialized
+    # with this Job by the migrator's PostgreSQL advisory lock); this Job then adds the
+    # `--bootstrap` step (first superadmin + instance identity), and `helm install` reports
+    # success only once it has completed.
+    # pre-upgrade: on `helm upgrade` everything it needs already exists, so it migrates the
+    # database with the NEW image before any new api/webmail/worker Pod is rolled out (it runs
+    # with the release's previous ConfigMap/Secret, which is what the running Pods use too).
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": {{ .Values.migrate.hookWeight | quote }}
+    # Deleted once it succeeds; a failed Job is kept so `kubectl logs job/...-migrate` works.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      restartPolicy: Never
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "mgate.image" (dict "root" . "repository" .Values.image.backend.repository "tag" .Values.image.backend.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # Applies migrations and creates the first superadmin (MGATE_ADMIN_EMAIL /
+          # MGATE_ADMIN_PASSWORD from the ConfigMap/Secret) + instance identity if absent.
+          # Waits up to ~60 s for PostgreSQL itself; the Job's backoffLimit covers a slower start.
+          args: ["migrate", "--bootstrap"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "mgate.configMapName" . }}
+            - secretRef:
+                name: {{ include "mgate.secretsName" . }}
+          securityContext:
+            {{- include "mgate.securityContext" (dict "root" .) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}

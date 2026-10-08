@@ -1,0 +1,24 @@
+{{/*
+PodDisruptionBudgets for the components that CAN safely run >1 replica (api/webmail/web/rspamd).
+postfix/dovecot default their `podDisruptionBudget.enabled` to false: with replicaCount=1 (the
+only supported value until TODO(S8)), a PDB with minAvailable>=1 would block every voluntary
+eviction (node drains, cluster-autoscaler) forever — see values.yaml comments on those components.
+*/}}
+{{- range $component := list "api" "webmail" "web" "rspamd" }}
+{{- $cfg := index $.Values $component }}
+{{- if $cfg.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mgate.fullname" $ }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" $ "component" $component) | nindent 4 }}
+spec:
+  minAvailable: {{ $cfg.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" $ "component" $component) | nindent 6 }}
+---
+{{- end }}
+{{- end }}

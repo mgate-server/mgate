@@ -1,0 +1,28 @@
+name: Question
+description: Ask a question about using, configuring, or deploying MGate.
+title: "question: <short summary>"
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for a specific, answerable question about using,
+        configuring or deploying MGate.
+        Please check `docs/` first (`docs/README.md` is the index) —
+        `UI-DEVELOPMENT.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, `DNS.md` and
+        `OPERATIONS.md` cover most common questions.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >-
+        What are you trying to achieve? Relevant version, deployment method
+        (compose / Helm / built from source), and what you've already tried or read.

@@ -1,0 +1,5 @@
+# postscreen_access_list entries (CIDR table), evaluated after permit_mynetworks.
+# Format: <network>/<prefix>  permit|reject|dunno
+# TODO(S4): generated from the admin UI "IP allow/deny list" (ip_bans table) by mgate-agent.
+# Example:
+# 192.0.2.0/24    reject

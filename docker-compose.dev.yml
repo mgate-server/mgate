@@ -1,0 +1,118 @@
+# MGate — local development overlay: mailpit as the outbound mail sink, debug logging,
+# ACME disabled, and host-only (127.0.0.1) published ports for infra services normally kept
+# off the host.
+#
+# Always used together with docker-compose.build.yml (build from source): `make dev` runs
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml -f docker-compose.dev.yml up
+# Never publish these ports on a public interface — Postgres/Valkey/the Rspamd controller have
+# no TLS and, for Postgres/Valkey, auth only via the shared password in .env.
+#
+# Host ports are overridable (MGATE_DEV_*_PORT in .env) for machines where the defaults are
+# already taken, e.g. MGATE_DEV_MAILPIT_PORT=18025 (also MGATE_DEV_API_PORT / MGATE_DEV_WEBMAIL_PORT,
+# but then set VITE_API_URL / VITE_WEBMAIL_URL for `make dev-web` accordingly).
+
+# `backend` is internal: Docker does not publish ports of containers attached only to internal
+# networks, so the services below that publish a 127.0.0.1 port also join this plain bridge.
+networks:
+  dev-host:
+    driver: bridge
+
+x-dev-logging: &dev-log-env
+  MGATE_LOG_LEVEL: debug
+  MGATE_LOG_FORMAT: pretty
+
+# Development instances are not reachable from the Internet: never talk to an ACME CA.
+x-dev-app-env: &dev-app-env
+  <<: *dev-log-env
+  MGATE_ACME_ENABLED: "false"
+
+services:
+  migrate:
+    environment:
+      <<: *dev-app-env
+
+  api:
+    environment:
+      <<: *dev-app-env
+    ports:
+      # For `make dev-web` (Vite proxies /api to 127.0.0.1:8080). Loopback only. Through traefik
+      # the api is also reachable at https://127.0.0.1 (curl -k).
+      - "127.0.0.1:${MGATE_DEV_API_PORT:-8080}:8080"
+
+  webmail:
+    environment:
+      <<: *dev-app-env
+    ports:
+      # For `make dev-web` (Vite proxies /api/v1/mail to 127.0.0.1:8082). Loopback only.
+      - "127.0.0.1:${MGATE_DEV_WEBMAIL_PORT:-8082}:8082"
+
+  worker:
+    environment:
+      <<: *dev-app-env
+
+  postfix:
+    environment:
+      <<: *dev-log-env
+      # Redirect ALL outbound mail to mailpit instead of the real Internet. Name resolved via
+      # the `backend` network's embedded DNS (mailpit joins `backend` below).
+      MGATE_RELAYHOST: "[mailpit]:1025"
+    depends_on:
+      mailpit:
+        condition: service_healthy
+
+  dovecot:
+    environment:
+      <<: *dev-log-env
+
+  rspamd:
+    environment:
+      RSPAMD_LOG_LEVEL: info
+    ports:
+      # Rspamd's own web UI/API (normally backend-only).
+      - "127.0.0.1:${MGATE_DEV_RSPAMD_PORT:-11334}:11334"
+
+  postgres:
+    networks:
+      - dev-host
+    ports:
+      - "127.0.0.1:${MGATE_DEV_POSTGRES_PORT:-5432}:5432"
+
+  valkey:
+    networks:
+      - dev-host
+    ports:
+      - "127.0.0.1:${MGATE_DEV_VALKEY_PORT:-6379}:6379"
+
+  # Mail-capturing SMTP sink for development: everything Postfix relays lands here instead of
+  # being delivered to the real Internet. Web UI/API at http://127.0.0.1:${MGATE_DEV_MAILPIT_PORT}.
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - backend
+      - dev-host
+    environment:
+      TZ: ${TZ:-UTC}
+      MP_MAX_MESSAGES: "5000"
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "127.0.0.1:${MGATE_DEV_MAILPIT_PORT:-8025}:8025" # web UI + API
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

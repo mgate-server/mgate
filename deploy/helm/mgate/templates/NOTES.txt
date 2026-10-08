@@ -1,0 +1,48 @@
+MGate установлен как релиз "{{ .Release.Name }}" в namespace "{{ .Release.Namespace }}".
+
+Хостнейм: {{ .Values.config.hostname }}
+Режим сертификатов: {{ .Values.certs.mode }}
+Bundled PostgreSQL: {{ .Values.postgresql.enabled }}
+Bundled Valkey: {{ .Values.valkey.enabled }}
+ClamAV: {{ .Values.clamav.enabled }}
+
+1) Схема БД и первичная инициализация. Поды api/webmail/worker сначала выполняют `mgate migrate`
+   в initContainer `migrate`, затем Job {{ include "mgate.fullname" . }}-migrate (post-install-хук)
+   создаёт первого суперадмина; `helm install` завершается успешно только после этого Job.
+   Успешный Job удаляется автоматически; упавший остаётся для диагностики:
+   kubectl -n {{ .Release.Namespace }} get pods
+   kubectl -n {{ .Release.Namespace }} logs job/{{ include "mgate.fullname" . }}-migrate
+
+2) Вход в админку: логин — {{ .Values.config.adminEmail }}, пароль хранится в Secret
+   {{ include "mgate.secretsName" . }} (сгенерирован чартом, если secrets.adminPassword не задан):
+   kubectl -n {{ .Release.Namespace }} get secret {{ include "mgate.secretsName" . }} -o jsonpath='{.data.MGATE_ADMIN_PASSWORD}' | base64 -d; echo
+   Пароль используется только при создании первого суперадмина (последующие изменения Secret
+   на существующую учётную запись не влияют). Сбросить забытый пароль (новый будет напечатан):
+   kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "mgate.fullname" . }}-api -c api -- mgate admin reset-password {{ .Values.config.adminEmail }}
+
+3) Публичные почтовые адреса (LoadBalancer Service; дождитесь EXTERNAL-IP):
+   kubectl -n {{ .Release.Namespace }} get svc {{ include "mgate.fullname" . }}-postfix-public {{ include "mgate.fullname" . }}-dovecot-public
+   Направьте DNS-записи (MX/A) вашего домена на эти адреса — см. `mgate dns records <domain>`
+   после первого входа в админку.
+
+{{- if .Values.ingress.enabled }}
+
+4) Веб-интерфейс (admin/account/mail) доступен через Ingress на хосте {{ .Values.config.hostname }}:
+   kubectl -n {{ .Release.Namespace }} get ingress {{ include "mgate.fullname" . }}
+{{- else }}
+
+4) Ingress отключён (ingress.enabled=false) — обратитесь к Service {{ include "mgate.fullname" . }}-web
+   (SPA), {{ include "mgate.fullname" . }}-api (REST API) и {{ include "mgate.fullname" . }}-webmail
+   напрямую или настройте собственный маршрут.
+{{- end }}
+
+{{- if eq .Values.certs.mode "mgate" }}
+
+Известное ограничение (см. README.md "Известные ограничения"): certs.mode=mgate хранит
+сертификаты как файлы на общем PVC (как ожидают Postfix/Dovecot), а не как Kubernetes Secret —
+поэтому объект Ingress в этом режиме обслуживается БЕЗ TLS-терминации на уровне Ingress
+(controller отдаёт свой сертификат по умолчанию, либо TLS терминируется вне кластера).
+Для TLS через Ingress используйте certs.mode=cert-manager или existingSecret.
+{{- end }}
+
+Подробности, таблица values и известные ограничения — в deploy/helm/mgate/README.md.

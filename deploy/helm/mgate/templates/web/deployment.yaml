@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mgate.fullname" . }}-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "web") | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "web") | nindent 8 }}
+      {{- with .Values.web.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      # nginx:alpine's own baked-in `nginx` user, uid/gid 101 (docker/web/Dockerfile) — matches
+      # docker-compose.yml's `user: "101:101"` exactly; global.podSecurityContext's
+      # `runAsNonRoot: true` already fits this image, only the explicit uid needs overriding.
+      securityContext:
+        {{- include "mgate.podSecurityContext" (dict "root" . "override" (dict "runAsUser" 101 "runAsGroup" 101 "fsGroup" 101)) | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: web
+          image: {{ include "mgate.image" (dict "root" . "repository" .Values.web.image.repository "tag" .Values.web.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            # The SPA fetches /config.json before bootstrapping, so the same image
+            # works for any hostname without a rebuild — rendered by the image's own entrypoint.
+            - { name: MGATE_API_BASE_URL, value: {{ .Values.web.env.apiBaseUrl | quote }} }
+            - { name: MGATE_PRICING_URL, value: {{ .Values.web.env.pricingUrl | default "" | quote }} }
+            - { name: MGATE_VENDOR_PORTAL_URL, value: {{ .Values.web.env.vendorPortalUrl | default "" | quote }} }
+          ports:
+            - { name: http, containerPort: 8080, protocol: TCP }
+          livenessProbe:
+            httpGet: { path: {{ .Values.web.probes.path }}, port: http }
+            initialDelaySeconds: {{ .Values.web.probes.initialDelaySeconds }}
+            periodSeconds: {{ .Values.web.probes.periodSeconds }}
+          readinessProbe:
+            httpGet: { path: {{ .Values.web.probes.path }}, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            # Matches compose `read_only: true, cap_add: []`: nginx listens on 8080 (unprivileged),
+            # needs no Linux capability, and never writes outside the two tmpfs mounts below.
+            {{- include "mgate.securityContext" (dict "root" . "override" (dict "readOnlyRootFilesystem" true)) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+          volumeMounts:
+            # Same two writable paths as docker-compose.yml's tmpfs mounts: /tmp holds the
+            # entrypoint-rendered config.json (served via nginx `alias`, never into the read-only
+            # html tree); /var/cache/nginx is nginx's own proxy/fastcgi cache scratch space.
+            - { name: tmp, mountPath: /tmp }
+            - { name: nginx-cache, mountPath: /var/cache/nginx }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: nginx-cache, emptyDir: {} }
+      {{- with .Values.web.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

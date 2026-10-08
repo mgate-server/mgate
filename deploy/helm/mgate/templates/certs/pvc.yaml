@@ -1,0 +1,22 @@
+{{- if eq .Values.certs.mode "mgate" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mgate.certsPvcName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "") | nindent 4 }}
+  annotations:
+    # Keep the cert material across `helm uninstall` by default — losing it means every ACME
+    # account/rate limit history is gone and a fresh cert must be issued. Operators who want the
+    # opposite (clean uninstall) should remove this annotation via a values override/patch.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [{{ .Values.certs.persistence.accessMode | quote }}]
+  {{- if or .Values.certs.persistence.storageClass .Values.global.storageClass }}
+  storageClassName: {{ .Values.certs.persistence.storageClass | default .Values.global.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.certs.persistence.size }}
+{{- end }}

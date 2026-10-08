@@ -1,0 +1,105 @@
+MGate — Third-Party Notices
+============================
+
+MGate is a self-hosted mail platform that packages and configures a number of
+independent third-party components as container images and libraries. This
+file lists the third-party components bundled or invoked by the images and
+services built from this repository, and the license each is believed to be
+under at the time of writing (2026-09).
+
+[DRAFT — NOT REVIEWED BY A LAWYER] Notice to readers: license names below
+were recorded from each project's own documentation. Entries marked
+"[ПРОВЕРИТЬ лицензию]" are not yet confirmed. The authoritative license text
+for each component is the one shipped with the exact pinned version inside
+the image (for Debian/Alpine packages — `/usr/share/doc/<package>/copyright`
+or `/usr/share/licenses/`), not this summary.
+[REQUIRES LEGAL REVIEW: the whole file.]
+
+Bundled / invoked components
+-----------------------------
+
+| Component   | Pinned version (base image)          | Role in MGate                              | Upstream license (verify before release) |
+|-------------|----------------------------------------|---------------------------------------------|--------------------------------------------|
+| Postfix     | Debian trixie package (`debian:trixie-slim`, `docker/postfix`) | MTA (SMTP, SMTPS, Submission)                | IBM Public License 1.0 (IPL-1.0) or, for newer releases, Eclipse Public License 2.0 (EPL-2.0) — Postfix has used both across its history; pin to the exact license shipped with the Debian package version baked into `docker/postfix` |
+| Dovecot     | 2.4.x, Debian trixie package (`docker/dovecot`) | IMAP/POP3/LMTP/ManageSieve, `fts_flatcurve`   | MIT (core, since Dovecot's 2023 re-licensing) / LGPL-2.1 for some plugins — verify per pinned version |
+| Rspamd      | `rspamd/rspamd:4.1.5`                   | Spam filtering, DKIM/ARC signing, SPF/DMARC   | Apache-2.0 |
+| ClamAV      | `clamav/clamav:1.5.4-debian13-slim`     | Antivirus scanning (separate container, invoked over the `clamav:3310` clamd protocol — NOT statically or dynamically linked into any MGate binary or image) | GPL-2.0-only |
+| Traefik     | `traefik:v3.7.13`                        | Reverse proxy, TLS termination, ACME          | MIT |
+| PostgreSQL  | `postgres:18-alpine`                     | Primary relational database                   | PostgreSQL License (permissive, similar to MIT/BSD) |
+| Valkey      | `valkey/valkey:9.0.6-alpine`             | Cache, sessions, rate limiting, streams        | BSD-3-Clause |
+| Unbound     | Debian trixie package (`docker/unbound`) | DNSSEC-validating recursive resolver           | BSD-3-Clause |
+| nftables    | Debian trixie package (`docker/firewall`) | Host firewall ban set (`firewall` profile) | GPL-2.0 |
+| restic      | Alpine package (`docker/backup`)         | Encrypted backups                              | BSD-2-Clause |
+| supercronic | Alpine package (`docker/backup`)         | Cron-style scheduler for backups               | MIT |
+| PostgreSQL client tools (`pg_dump`) | Alpine package (`docker/backup`) | Database dumps for backups     | PostgreSQL License |
+| s6-overlay  | v3.2.3.2 (`docker/postfix`, `docker/dovecot`) | Process supervisor inside the mail containers | ISC |
+| nginx       | `nginx:1.29-alpine` (`docker/web`)       | Static web server for the web interface (SPA)  | BSD-2-Clause |
+| Debian / Alpine base systems | `debian:trixie-slim`, `alpine` (various `docker/*`) | Base operating-system layers of the images | Per-package licenses (GPL, LGPL, MIT, BSD and others) — see each package's copyright file inside the image |
+| Mailpit     | `axllent/mailpit` (dev-only)             | Development-only SMTP capture tool (`docker-compose.dev.yml`, never shipped in production compose) | MIT |
+
+Versions above are as pinned on 2026-09-12 — the authoritative, always-current source is
+`docker-compose.yml` / each `docker/*/Dockerfile`'s `FROM` line, not this file; this table is
+re-synced whenever a pinned version changes materially (not on every patch bump).
+
+GPL components and source availability
+----------------------------------------
+Source code for GPL-licensed components installed from Debian packages
+(for example nftables) is available from the Debian archive
+(https://sources.debian.org/) for the package version installed in the image.
+[ТРЕБУЕТ ЮРИСТА: порядок предоставления исходных текстов GPL-компонентов в
+распространяемых образах.]
+
+ClamAV and GPL-2.0
+--------------------
+ClamAV (GPL-2.0-only) is used strictly as a separate container communicating
+with MGate's own processes over the network protocol of `clamd` (TCP
+`clamav:3310`), the same integration model used by Rspamd and Postfix's own
+milter/antivirus hooks. No MGate source file links against ClamAV's libraries,
+and no ClamAV source or binary is embedded inside any MGate-built image. This
+is recorded here for transparency; it is not itself a legal opinion.
+[REQUIRES LEGAL REVIEW: to be reconfirmed by a qualified lawyer.]
+
+JavaScript dependencies (this repository)
+--------------------------------------------
+This repository contains no Rust source (the backend is closed and is
+distributed only as the `mgate` and `mgate-agent` container images). The
+frontend workspace (`web/package.json` workspaces) pulls in a large number of
+npm packages, which are compiled into the static web interface shipped in the
+`web` image. They are NOT enumerated individually in this file. The licenses
+of these packages have not yet been audited and no generated per-package
+report is published next to release artifacts.
+[ПРОВЕРИТЬ лицензию: сформировать отчёт по лицензиям npm-зависимостей
+(например, `license-checker`) и опубликовать его.]
+
+Fonts, icons, and other static assets added under `web/` must record their
+license here individually when added.
+
+Third-party notices for the dependencies compiled into the closed backend
+images (`ghcr.io/mgate-server/mgate`, `ghcr.io/mgate-server/mgate-agent`) are
+maintained by the vendor separately and are not reproduced here, since that
+source and its dependency tree are not published.
+[REQUIRES LEGAL REVIEW: confirm how attribution notices for third-party
+components compiled into the distributed backend images are made available
+to recipients of those images.]
+
+Licence-key functionality lives in the closed backend, not in this repository
+------------------------------------------------------------------------------
+Every piece of licence/entitlement logic (instance identity,
+activation/renewal, the Community domain-limit check, entitlement
+computation, communication with the licence server) lives inside the closed
+backend binary, distributed only as a container image.
+**This repository contains none of it.** This repository is published
+without an open-source or source-available licence on its own code — see
+`LICENSE` — so there is no separate "licence key functionality" clause to
+reason about for this repository's own terms; the restriction that matters
+— forbidding attempts to disable, patch around, or reverse-engineer the
+licence checks inside the distributed backend image — is a term of
+`EULA.md` (the only document granting usage rights over the distributed
+images), not of a code licence on this repository. See `EULA.md` and
+`docs/LICENSING.md` for what that covers.
+
+Trademarks
+-----------
+"MGate" is used here as a project name only; no trademark claim is made or
+implied over any third-party name listed above. All third-party trademarks
+belong to their respective owners.

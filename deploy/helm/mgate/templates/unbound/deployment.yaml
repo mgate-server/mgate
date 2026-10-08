@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mgate.fullname" . }}-unbound
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "unbound") | nindent 4 }}
+spec:
+  replicas: {{ .Values.unbound.replicaCount }}
+  {{- if .Values.unbound.persistence.enabled }}
+  strategy:
+    type: Recreate # a single RWO PVC (RFC 5011 root.key state) cannot do a RollingUpdate;
+                   # also do not raise unbound.replicaCount above 1 while persistence is enabled.
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" . "component" "unbound") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "unbound") | nindent 8 }}
+      {{- with .Values.unbound.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: unbound
+          image: {{ include "mgate.image" (dict "root" . "repository" .Values.unbound.image.repository "tag" .Values.unbound.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # Read by docker/unbound/docker-entrypoint.sh to render unbound.conf from its template —
+          # mirrors docker-compose.yml's unbound service exactly (both have safe fallbacks baked
+          # into the entrypoint, so this is only for parity with compose/clarity, not strictly required).
+          env:
+            - { name: MGATE_BACKEND_SUBNET, value: {{ .Values.config.backendSubnet | default "172.30.1.0/24" | quote }} }
+            - { name: LOG_LEVEL, value: "1" }
+          ports:
+            - { name: dns-udp, containerPort: 53, protocol: UDP }
+            - { name: dns-tcp, containerPort: 53, protocol: TCP }
+          # The image ships /usr/local/bin/healthcheck.sh (the same script as its Docker HEALTHCHECK):
+          # a root NS query through the full resolution path. unbound-control is not used — remote
+          # control is not enabled in the image.
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh"]
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 5
+          securityContext:
+            # Runs as the unprivileged `unbound` user (image USER directive) — binding UDP/TCP :53
+            # as non-root needs CAP_NET_BIND_SERVICE, mirrors compose `cap_add` exactly (same
+            # rationale as compose: some runtimes don't lower net.ipv4.ip_unprivileged_port_start
+            # the way Docker does, so the capability is kept rather than relied-upon-absent).
+            {{- include "mgate.securityContext" (dict "root" . "override" (dict "capabilities" (dict "drop" (list "ALL") "add" (list "NET_BIND_SERVICE")))) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.unbound.resources | nindent 12 }}
+          {{- if .Values.unbound.persistence.enabled }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/unbound }
+          {{- end }}
+      {{- if .Values.unbound.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "mgate.fullname" . }}-unbound-data
+      {{- end }}
+      {{- with .Values.unbound.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.unbound.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.unbound.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if .Values.unbound.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mgate.fullname" . }}-unbound-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "unbound") | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if or .Values.unbound.persistence.storageClass .Values.global.storageClass }}
+  storageClassName: {{ .Values.unbound.persistence.storageClass | default .Values.global.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.unbound.persistence.size }}
+{{- end }}

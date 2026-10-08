@@ -1,0 +1,16 @@
+{{- if .Values.valkey.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  # Bare Service name — see templates/_helpers.tpl "mgate.valkeyHost".
+  name: valkey
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "valkey") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "mgate.selectorLabels" (dict "root" . "component" "valkey") | nindent 4 }}
+  ports:
+    - { name: valkey, port: 6379, targetPort: valkey, protocol: TCP }
+{{- end }}

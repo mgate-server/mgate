@@ -1,0 +1,107 @@
+# MGate Postfix master.cf (Postfix 3.10). Every service runs with chroot = n (column 5):
+# the container is the isolation boundary and the daemons need /certs, /etc/ssl and DNS config.
+#
+# ==========================================================================================
+# service     type  private unpriv  chroot  wakeup  maxproc command + args
+# ==========================================================================================
+# Port 25: postscreen screens clients (DNSBL, pregreet), then hands them to smtpd.
+smtp          inet  n       -       n       -       1       postscreen
+smtpd         pass  -       -       n       -       -       smtpd
+dnsblog       unix  -       -       n       -       0       dnsblog
+tlsproxy      unix  -       -       n       -       0       tlsproxy
+
+# Port 587: submission, STARTTLS required, SASL via dovecot, headers stripped of client info.
+submission    inet  n       -       n       -       -       smtpd
+  -o syslog_name=postfix/submission
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_tls_auth_only=yes
+  -o smtpd_client_restrictions=$mua_client_restrictions
+  -o smtpd_helo_restrictions=$mua_helo_restrictions
+  -o smtpd_sender_restrictions=$mua_sender_restrictions
+  -o smtpd_relay_restrictions=$mua_relay_restrictions
+  -o smtpd_recipient_restrictions=$mua_recipient_restrictions
+  -o smtpd_end_of_data_restrictions=$mua_end_of_data_restrictions
+  -o milter_macro_daemon_name=ORIGINATING
+  -o milter_default_action=tempfail
+  -o cleanup_service_name=cleanup-submission
+
+# Port 2587: internal submission for the webmail gateway only. Never published to the host
+# (compose publishes 25/465/587 only; the Helm NetworkPolicy admits webmail pods only).
+# Same TLS, SASL, restriction sets, policy service, milter and header cleanup as 587, except:
+# - SASL service "smtp-webmail" (Dovecot sees it as the protocol): the API accepts the gateway's
+#   per-session credentials only on this path and refuses ordinary passwords here;
+# - only the clients in $mgate_webmail_clients (loopback + MGATE_WEBMAIL_CLIENT_NETS, default
+#   MGATE_BACKEND_SUBNET) may connect; smtpd_delay_reject=no rejects everybody else at connect
+#   time, before AUTH;
+# - those clients are exempt from the per-client-IP anvil limits: every webmail user connects
+#   from the gateway's address, so the shared 30 AUTH/min (and connection/message rate) limits
+#   would throttle the whole installation. Per-mailbox limits still apply (policy service, keyed
+#   on sasl_username); policy_context tells the policy service which listener was used.
+2587          inet  n       -       n       -       -       smtpd
+  -o syslog_name=postfix/submission-webmail
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_tls_auth_only=yes
+  -o smtpd_sasl_service=smtp-webmail
+  -o smtpd_delay_reject=no
+  -o smtpd_client_restrictions=$mua_webmail_client_restrictions
+  -o smtpd_helo_restrictions=$mua_helo_restrictions
+  -o smtpd_sender_restrictions=$mua_sender_restrictions
+  -o smtpd_relay_restrictions=$mua_relay_restrictions
+  -o smtpd_recipient_restrictions=$mua_recipient_restrictions
+  -o smtpd_end_of_data_restrictions=$mua_end_of_data_restrictions
+  -o milter_macro_daemon_name=ORIGINATING
+  -o milter_default_action=tempfail
+  -o cleanup_service_name=cleanup-submission
+  -o smtpd_client_event_limit_exceptions=$mgate_webmail_clients
+  -o smtpd_policy_service_policy_context=submission-webmail
+
+# Port 465: submissions (implicit TLS, "wrapper mode"), same policy as 587.
+smtps         inet  n       -       n       -       -       smtpd
+  -o syslog_name=postfix/smtps
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_client_restrictions=$mua_client_restrictions
+  -o smtpd_helo_restrictions=$mua_helo_restrictions
+  -o smtpd_sender_restrictions=$mua_sender_restrictions
+  -o smtpd_relay_restrictions=$mua_relay_restrictions
+  -o smtpd_recipient_restrictions=$mua_recipient_restrictions
+  -o smtpd_end_of_data_restrictions=$mua_end_of_data_restrictions
+  -o milter_macro_daemon_name=ORIGINATING
+  -o milter_default_action=tempfail
+  -o cleanup_service_name=cleanup-submission
+
+pickup        unix  n       -       n       60      1       pickup
+cleanup       unix  n       -       n       -       0       cleanup
+# Dedicated cleanup for authenticated submission: removes the client's Received header and
+# X-Originating-IP (privacy) and, like the default cleanup, Authentication-Results headers that
+# claim this server's authserv-id. Milters (DKIM signing) see the already-cleaned headers.
+cleanup-submission unix n   -       n       -       0       cleanup
+  -o syslog_name=postfix/submission
+  -o header_checks=regexp:/etc/postfix/submission_header_cleanup.regexp,regexp:/etc/postfix/authres_strip.regexp
+qmgr          unix  n       -       n       300     1       qmgr
+tlsmgr        unix  -       -       n       1000?   1       tlsmgr
+rewrite       unix  -       -       n       -       -       trivial-rewrite
+bounce        unix  -       -       n       -       0       bounce
+defer         unix  -       -       n       -       0       bounce
+trace         unix  -       -       n       -       0       bounce
+verify        unix  -       -       n       -       1       verify
+flush         unix  n       -       n       1000?   0       flush
+proxymap      unix  -       -       n       -       -       proxymap
+proxywrite    unix  -       -       n       -       1       proxymap
+smtp          unix  -       -       n       -       -       smtp
+relay         unix  -       -       n       -       -       smtp
+  -o syslog_name=postfix/$service_name
+showq         unix  n       -       n       -       -       showq
+error         unix  -       -       n       -       -       error
+retry         unix  -       -       n       -       -       error
+discard       unix  -       -       n       -       -       discard
+local         unix  -       n       n       -       -       local
+virtual       unix  -       n       n       -       -       virtual
+lmtp          unix  -       -       n       -       -       lmtp
+anvil         unix  -       -       n       -       1       anvil
+scache        unix  -       -       n       -       1       scache
+# Only used when MGATE_LOG_STDOUT=1 (maillog_file = /dev/stdout).
+postlog       unix-dgram n  -       n       -       1       postlogd

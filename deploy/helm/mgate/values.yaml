@@ -1,0 +1,607 @@
+## MGate Helm chart — default values.
+## This file mirrors the docker-compose topology (docker-compose.yml in the repository root).
+## Every env var name below matches the canonical name in the compose .env.example file, so
+## operators can cross-reference the two.
+##
+## Quick start (bundled Postgres + Valkey, self-signed certificate until you upload your own in the
+## admin UI — automatic ACME issuance is in development; no ingress controller assumed):
+##   helm install mgate deploy/helm/mgate --namespace mgate --create-namespace --timeout 15m \
+##     --set config.hostname=mail.example.com --set config.adminEmail=admin@example.com
+## The first superadmin's password is generated into the release Secret (see NOTES.txt):
+##   kubectl -n mgate get secret mgate-secrets -o jsonpath='{.data.MGATE_ADMIN_PASSWORD}' | base64 -d
+##
+## Production start (external Postgres/Valkey, cert-manager, ingress):
+##   helm install mgate deploy/helm/mgate -f my-values.yaml
+## See README.md for the full walkthrough and the values table.
+
+## -----------------------------------------------------------------------------------------------
+## Global settings shared by every sub-chart-like template in this chart (there are no real
+## sub-charts; "global" here just avoids repeating the same value under every component).
+## -----------------------------------------------------------------------------------------------
+global:
+  # Container registry + tag applied to all first-party MGate images (api/webmail/worker share one
+  # image; postfix/dovecot/rspamd/unbound/backup/firewall are separate images). Matches
+  # MGATE_REGISTRY / MGATE_VERSION.
+  imageRegistry: ghcr.io/mgate-server
+  # One CalVer version (YYYY.M.N, e.g. 2026.10.1) for the whole product: all images, the chart
+  # and the backend. Defaults to .Chart.AppVersion when empty; pin an exact version in production.
+  imageTag: ""
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  # Default StorageClass for all PVCs (vmail, postfix spool, certs, postgres, valkey, clamav-db,
+  # rspamd-data). Leave empty to use the cluster default StorageClass.
+  storageClass: ""
+  # Applied as a baseline to every Pod; components may tighten further (see each component's
+  # `securityContext`). Postfix/Dovecot/ClamAV processes traditionally want specific uid/gid
+  # (vmail 5000:5000) which is set on those components explicitly.
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+    fsGroup: 5000 # matches vmail gid so PVC-mounted files are group-writable across pods
+
+nameOverride: ""
+fullnameOverride: ""
+
+## -----------------------------------------------------------------------------------------------
+## Vendor-supplied closed-source images (the backend service source is never
+## distributed — it ships only as these two pre-built images). There is exactly ONE backend build;
+## no community/official image choice exists anywhere in this chart.
+## -----------------------------------------------------------------------------------------------
+image:
+  backend:
+    # The single `mgate` binary image; api/webmail/worker/migrate below all use it, differing only
+    # in the container `args` (`serve --components ...` / `worker` / `migrate --bootstrap`, see
+    # the commands below). -> <global.imageRegistry>/mgate
+    repository: mgate
+    tag: "" # falls back to global.imageTag / Chart.AppVersion
+  agent:
+    # Tiny vendor image whose only content is the `mgate-agent` binary.
+    # NOT deployed as its own workload by this chart: postfix/dovecot's own images already bake a
+    # copy of it in at BUILD time (`docker/{postfix,dovecot}/Dockerfile`:
+    # `COPY --from=${MGATE_AGENT_IMAGE} /usr/local/bin/mgate-agent ...`), matching
+    # docker-compose.build.yml's `MGATE_AGENT_IMAGE` build arg exactly — there is no runtime
+    # `mgate-agent` container to point at (its image ships no shell, so it cannot be repurposed as
+    # a copy-the-binary initContainer either). Declared here only so operators/CI building their
+    # own postfix/dovecot images from this repo's Dockerfiles have one canonical values.yaml place
+    # documenting which agent image version they must pin as that build arg (see README.md).
+    repository: mgate-agent
+    tag: "" # documentation only, see comment above — not consumed by any template in this chart
+
+## -----------------------------------------------------------------------------------------------
+## Non-secret configuration. Rendered into a ConfigMap (mgate-config) and consumed via envFrom by
+## every backend component (api/webmail/worker/migrate). Postfix/Dovecot/Rspamd containers read
+## the same values through their own templated configs (defined by the respective docker/ image, not
+## by this chart) but get the DB/Valkey coordinates through the same Secret (see `secrets` below).
+## -----------------------------------------------------------------------------------------------
+config:
+  # FQDN: MX target, HELO, admin/webmail host. REQUIRED — must be set for a real install.
+  hostname: mail.example.com
+  # Login of the first superadmin (created by the migrate Job); also reserved as the ACME account
+  # contact for automatic certificate issuance (in development).
+  adminEmail: admin@example.com
+  timezone: UTC
+  bindAddress: "0.0.0.0"
+  logLevel: info # trace|debug|info|warn|error
+  logFormat: json # json|pretty
+  messageSizeLimit: 52428800 # bytes, MGATE_MESSAGE_SIZE_LIMIT
+  licenseServer: "https://cloud.mgate.example" # MGATE_LICENSE_SERVER, placeholder domain
+  # MGATE_BACKEND_SUBNET (Postfix `mynetworks` / Dovecot `login_trusted_networks` — an unauthenticated
+  # relay/trust path for anything inside this CIDR, e.g. the worker role sending transactional mail
+  # straight to postfix:25). Compose hardcodes its own small docker-bridge subnet here; Kubernetes
+  # Pod CIDRs vary per cluster and are usually much larger, so this chart does NOT guess one — set it
+  # to your cluster's real Pod CIDR if you need the internal-relay behavior, otherwise Postfix/Dovecot
+  # only trust loopback (fails closed instead of risking an unintentionally wide-open relay). See
+  # README.md "Известные ограничения".
+  backendSubnet: ""
+  # Outbound HTTP(S) proxy for api/webmail/worker/migrate (licence server, ACME CA) — same as
+  # HTTPS_PROXY/HTTP_PROXY/NO_PROXY in the compose .env. Empty = direct connections. When a proxy
+  # is set, NO_PROXY always starts with localhost and this release's in-cluster Service names
+  # (+ .svc/.cluster.local); `noProxy` appends your own exceptions (comma-separated).
+  proxy:
+    httpsProxy: ""
+    httpProxy: ""
+    noProxy: ""
+  # Reserved for automatic certificate issuance (ACME), which is IN DEVELOPMENT: in this release
+  # nothing is issued or renewed whatever these values are. A self-signed certificate is served
+  # until you upload your own (PEM chain + key) in the admin UI; see docs/CONFIGURATION.md.
+  acme:
+    enabled: true
+    directory: letsencrypt # letsencrypt | letsencrypt-staging | zerossl | <custom ACME directory URL>
+    challenge: http-01 # http-01 | dns-01
+    dnsProvider: "" # cloudflare | route53 | rfc2136 | ... (only used with challenge=dns-01)
+    eabKid: "" # ZeroSSL External Account Binding
+    eabHmac: ""
+
+## -----------------------------------------------------------------------------------------------
+## Secrets. By default the chart generates random values on first install and PRESERVES them on
+## `helm upgrade` via a `lookup` of the existing Secret (see templates/_helpers.tpl
+## "mgate.secretValue"). Set `secrets.existingSecret` to bring your own Secret instead (it must
+## contain every key listed in templates/secret.yaml as a comment) — the chart then renders no
+## Secret of its own.
+## -----------------------------------------------------------------------------------------------
+secrets:
+  # Name of a pre-existing Secret with the same keys the chart would otherwise generate (including
+  # MGATE_ADMIN_PASSWORD — without it `mgate migrate --bootstrap` prints a generated password only
+  # into the migrate Job's log, and that Job is deleted once it succeeds). Leave empty to let the
+  # chart manage its own Secret (name: <fullname>-secrets).
+  existingSecret: ""
+  # Optional: pin values instead of letting the chart randomize them (e.g. to match an external
+  # Postgres/Valkey password you already provisioned). Empty string = chart generates & preserves.
+  # MGATE_ADMIN_PASSWORD of the first superadmin (login: config.adminEmail), used once by the
+  # migrate Job when no admin exists yet. Empty = the chart generates a random one into the Secret;
+  # read it with: kubectl -n <ns> get secret <fullname>-secrets -o jsonpath='{.data.MGATE_ADMIN_PASSWORD}' | base64 -d
+  adminPassword: ""
+  postgresPassword: ""
+  postgresMailPassword: ""
+  valkeyPassword: ""
+  secretKey: "" # MGATE_SECRET_KEY, base64 32 bytes, at-rest encryption
+  internalToken: "" # MGATE_INTERNAL_TOKEN, bearer token for /internal/v1/* and mgate-agent
+  doveadmApiKey: ""
+  rspamdControllerPassword: ""
+  resticPassword: ""
+  awsAccessKeyId: ""
+  awsSecretAccessKey: ""
+
+## -----------------------------------------------------------------------------------------------
+## Bundled PostgreSQL (StatefulSet, 1 replica, PVC pg-data). Disable and fill `externalDatabase`
+## to point at your own PostgreSQL 18 cluster instead — this chart intentionally does NOT depend
+## on the Bitnami postgresql chart so it has no third-party chart dependency.
+## -----------------------------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "18-alpine"
+  database: mgate # POSTGRES_DB
+  username: mgate # POSTGRES_USER
+  mailUsername: mgate_mail # POSTGRES_MAIL_USER, read-only role for postfix/dovecot views
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: "" # falls back to global.storageClass
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+  extraEnv: []
+
+# Used only when postgresql.enabled=false.
+externalDatabase:
+  host: ""
+  port: 5432
+  database: mgate
+  username: mgate
+  # Secret + key holding the password; chart never reads a plaintext external password from values.
+  existingSecret: ""
+  existingSecretPasswordKey: password
+  mailUsername: mgate_mail
+  mailExistingSecret: ""
+  mailExistingSecretPasswordKey: password
+  sslmode: prefer # appended to MGATE_DATABASE_URL (?sslmode=) and PGSSLMODE of the backup CronJob: disable|prefer|require|verify-ca|verify-full
+
+## -----------------------------------------------------------------------------------------------
+## Bundled Valkey (StatefulSet, 1 replica, PVC valkey-data, no clustering — see TODO(S8)).
+## Disable and fill `externalValkey` for a managed/HA Valkey or Redis-compatible service instead.
+## -----------------------------------------------------------------------------------------------
+valkey:
+  enabled: true
+  image:
+    repository: valkey/valkey
+    tag: "9.0.6-alpine"
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+externalValkey:
+  host: ""
+  port: 6379
+  existingSecret: ""
+  existingSecretPasswordKey: password
+
+## -----------------------------------------------------------------------------------------------
+## mgate application components (api/webmail/worker share the image `mgate`, differing only in the
+## `serve --components ...` / `worker` command).
+## -----------------------------------------------------------------------------------------------
+api:
+  replicaCount: 1 # TODO(S2): sessions/rate-limits already live in Valkey so this MAY scale >1;
+                  # revisit once api statelessness is verified end to end.
+  # Image: see the shared `image.backend` block above.
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  probes:
+    path: /api/v1/system/health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  # Extra env for the api container only (Kubernetes EnvVar list; takes precedence over the shared
+  # ConfigMap/Secret). Typical use: the web-login brute-force protection reads the client IP from
+  # X-Forwarded-For only from trusted proxies (docs/CONFIGURATION.md, docs/DEPLOYMENT.md §9):
+  #   extraEnv:
+  #     - { name: MGATE_WEBMAIL_TRUSTED_PROXIES, value: "100.64.0.0/10, 127.0.0.0/8" }
+  # The list must contain EVERY proxy between users and MGate (ingress controller pod network,
+  # CDN, L7 balancer). Keep it equal to the value set for `webmail.extraEnv`.
+  extraEnv: []
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+webmail:
+  # Keep at 1 unless your ingress controller pins each browser session to one replica (cookie
+  # affinity): staged attachment uploads (spool below) are local to the replica that received
+  # them. Everything else works on any replica.
+  replicaCount: 1
+  # Image: see the shared `image.backend` block above.
+  # Mail servers the webmail gateway connects to (bare in-cluster Service names, see
+  # templates/{dovecot,postfix}/service.yaml). Both use STARTTLS and are verified against the
+  # server certificate in /certs. 1143 (Dovecot) and 2587 (Postfix) are internal listeners for
+  # the webmail gateway only: not exposed by any public Service, and templates/networkpolicy.yaml
+  # admits webmail pods only. The gateway's credentials are refused on the public ports, so do
+  # not point these at 143/587.
+  # To let Dovecot see the real client IP behind webmail, config.backendSubnet must cover the
+  # webmail pod IPs (otherwise Dovecot sees the pod IP; logins still work).
+  upstream:
+    imapAddr: "dovecot:1143" # MGATE_IMAP_ADDR
+    submissionAddr: "postfix:2587" # MGATE_SUBMISSION_ADDR
+  # Staged attachment uploads (deleted after sending or after a TTL), on an emptyDir mounted at
+  # /var/lib/mgate/webmail-spool. `maxBytes` is the gateway's own global cap
+  # (MGATE_WEBMAIL_SPOOL_MAX) and must stay below `sizeLimit` with headroom: the kubelet evicts
+  # the pod when an emptyDir grows past its sizeLimit.
+  spool:
+    sizeLimit: 2Gi
+    maxBytes: 1610612736 # 1.5 GiB
+  # Extra env for the webmail container only (Kubernetes EnvVar list), e.g. the optional
+  # MGATE_WEBMAIL_* tuning variables from docs/CONFIGURATION.md:
+  #   extraEnv:
+  #     - { name: MGATE_WEBMAIL_MAX_CONNECTIONS, value: "800" }
+  extraEnv: []
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  probes:
+    path: /api/v1/mail/health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+worker:
+  replicaCount: 1 # keep at 1: job scheduler is not lease-elected yet, see TODO(S2) in the worker role
+  # Image: see the shared `image.backend` block above.
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  # Extra env for the worker container only (Kubernetes EnvVar list), same format as `api.extraEnv`.
+  extraEnv: []
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## -----------------------------------------------------------------------------------------------
+## web — nginx serving the built React SPA + runtime /config.json. Public
+## repo image, NOT the vendor backend. Stateless: safe to run >1 replica behind the Ingress.
+## -----------------------------------------------------------------------------------------------
+web:
+  replicaCount: 1
+  image:
+    repository: web # -> <global.imageRegistry>/web
+    tag: ""
+  # Rendered into /config.json by the image's own entrypoint at container start (docker/web),
+  # matching docker-compose.yml's MGATE_API_BASE_URL/MGATE_PRICING_URL/MGATE_VENDOR_PORTAL_URL
+  # exactly.
+  env:
+    apiBaseUrl: "" # empty = same origin as the SPA (Traefik/Ingress fronts both web and api)
+    # Optional links shown in the admin UI (rendered into /config.json "links" only when non-empty).
+    pricingUrl: ""
+    vendorPortalUrl: ""
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 128Mi }
+  probes:
+    path: /
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## -----------------------------------------------------------------------------------------------
+## Postfix — StatefulSet (1 replica; spool is stateful and not designed for multi-writer). Public
+## mail ports (25/465/587) via a LoadBalancer Service with externalTrafficPolicy: Local so Postfix
+## sees real client IPs (needed for postscreen/rate limiting).
+## -----------------------------------------------------------------------------------------------
+postfix:
+  replicaCount: 1 # TODO(S8): multi-replica needs a shared/clustered spool design; not supported yet
+  image:
+    repository: postfix
+    tag: ""
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 768Mi }
+  service:
+    type: LoadBalancer
+    externalTrafficPolicy: Local
+    annotations: {}
+    loadBalancerIP: ""
+    # Enable if your LB / MetalLB speaker terminates PROXY protocol in front of Postfix so
+    # postscreen still sees the real client IP; Postfix must be configured accordingly (see
+    # docker/postfix).
+    proxyProtocol: false
+  # Source networks admitted on the internal webmail submission listener 2587
+  # (MGATE_WEBMAIL_CLIENT_NETS: CIDRs separated by spaces or commas, IPv6 without brackets).
+  # Empty = config.backendSubnet; if that is empty too, any source — then the webmail-only
+  # NetworkPolicy is the network-level guard (2587 accepts nothing but the webmail gateway's
+  # per-session credentials either way). Set it to your Pod CIDR (or the webmail pods' range) to
+  # restrict 2587 inside Postfix as well without trusting that range for relaying, which
+  # config.backendSubnet would also do.
+  webmailClientNets: ""
+  podDisruptionBudget:
+    enabled: false # single replica: a PDB with minAvailable:1 would block all voluntary evictions
+    minAvailable: 1
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## -----------------------------------------------------------------------------------------------
+## Dovecot — StatefulSet (exactly 1 replica; vmail Maildir on an RWO PVC). The shipped Dovecot 2.4
+## CE has no director (removed upstream), so several Dovecot replicas cannot share one mail store
+## safely: one Dovecot per vmail volume is the only supported layout. See TODO(S8).
+## -----------------------------------------------------------------------------------------------
+dovecot:
+  replicaCount: 1 # TODO(S8): only one Dovecot per vmail volume is supported (no director in 2.4 CE)
+  image:
+    repository: dovecot
+    tag: ""
+  persistence:
+    size: 20Gi
+    storageClass: ""
+    # ReadWriteMany only matters for the backup CronJob, which mounts this volume read-only
+    # next to Dovecot (see backup below); Dovecot itself stays a single replica either way.
+    accessMode: ReadWriteOnce
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 768Mi }
+  service:
+    type: LoadBalancer
+    externalTrafficPolicy: Local
+    annotations: {}
+    loadBalancerIP: ""
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+rspamd:
+  replicaCount: 1 # stateless-ish (DKIM/ARC keys + bayes/fuzzy data live in Valkey db1);
+                  # local rspamd-data is local cache only, safe to run >1 replica behind the milter port,
+                  # but Deployment default stays 1 until load-tested (TODO(S8)).
+  image:
+    repository: rspamd
+    tag: ""
+  persistence:
+    enabled: false # local cache only; enable for faster restarts on a single replica
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## -----------------------------------------------------------------------------------------------
+## ClamAV — optional (mirrors compose `profile: clamav`). StatefulSet so the virus DB PVC survives
+## restarts (freshclam re-downloads ~200MB+ otherwise).
+## -----------------------------------------------------------------------------------------------
+clamav:
+  enabled: true
+  image:
+    repository: clamav/clamav # official upstream image, not a first-party mgate image
+    tag: "1.5.4-debian13-slim" # matches docker-compose.yml exactly (docker/clamav is not our own build)
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 200m, memory: 1Gi }
+    limits: { memory: 2Gi } # clamd + freshclam are memory-hungry; see docs/DEPLOYMENT.md
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## -----------------------------------------------------------------------------------------------
+## Unbound — DNSSEC-validating recursive resolver used by every component for outbound DNS
+## (DNSBL-safe). Compose pins a static IP; Kubernetes has no equivalent, so
+## components here resolve it by its ClusterIP Service DNS name instead — see `deviations`.
+## -----------------------------------------------------------------------------------------------
+unbound:
+  replicaCount: 1 # keep at 1 while persistence.enabled: true (single RWO PVC, see the Deployment)
+  image:
+    repository: unbound
+    tag: ""
+  # Compose's `unbound-data` volume persists the RFC 5011 root-trust-anchor state
+  # across restarts; disabled by default here because it forces `strategy: Recreate` (brief DNS
+  # outage on every rollout) and unbound reseeds the anchor from the image's own dns-root-data
+  # package on every fresh start regardless (docker/unbound/docker-entrypoint.sh) — enable for a
+  # production install that wants the RFC 5011 rolled state to actually survive across restarts.
+  persistence:
+    enabled: false
+    size: 256Mi
+    storageClass: ""
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## -----------------------------------------------------------------------------------------------
+## migrate — Helm hook Job (post-install,pre-upgrade). Runs `mgate migrate --bootstrap`: applies
+## migrations and creates the first superadmin + instance identity if absent. api/webmail/worker
+## additionally run plain `mgate migrate` as an initContainer (same resources below), so no
+## component ever starts on a stale schema — see templates/migrate/job.yaml.
+## -----------------------------------------------------------------------------------------------
+migrate:
+  # Image: see the shared `image.backend` block above.
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  # Each attempt waits ~60 s for PostgreSQL; on a fresh install the bundled PostgreSQL may still be
+  # pulling its image / provisioning its volume, hence several attempts. Pass `helm install/upgrade
+  # --timeout 15m` (Helm's default of 5m can be shorter than a cold first start).
+  backoffLimit: 6
+  activeDeadlineSeconds: 900
+  # Order among this chart's hooks (it is currently the only one); lower runs first.
+  hookWeight: "-5"
+
+## -----------------------------------------------------------------------------------------------
+## backup — optional CronJob (restic + pg_dump). Mirrors compose `profile: backup`. Runs as root
+## with every capability dropped except DAC_OVERRIDE (allowed by the Pod Security "baseline"
+## level, unlike DAC_READ_SEARCH): the mail store is owned by vmail (5000:5000) with private
+## Maildirs, so no fixed non-root uid can read it. vmail (and certs in certs.mode=mgate) are mounted
+## read-only; the only writable mount is the backup PVC.
+## -----------------------------------------------------------------------------------------------
+backup:
+  enabled: false
+  image:
+    repository: backup
+    tag: ""
+  schedule: "0 3 * * *" # BACKUP_SCHEDULE
+  restic:
+    repository: "/backups/restic" # RESTIC_REPOSITORY; set to s3:https://... for off-site backups
+    keepDaily: 7
+    keepWeekly: 4
+    keepMonthly: 6
+  persistence:
+    # Local backup target PVC, mounted at /backups. Ignored (no PVC created) when
+    # restic.repository points at an external target (s3://, etc) — set persistence.enabled=false
+    # and rely on `secrets.awsAccessKeyId`/`awsSecretAccessKey` instead.
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+## -----------------------------------------------------------------------------------------------
+## Shared TLS certificates. Postfix/Dovecot/Traefik-equivalent all read
+## /certs/live/<name>/{fullchain,privkey}.pem and /certs/default/*. Three modes:
+##   mgate        — the backend manages the files on a shared ReadWriteMany PVC every relevant Pod
+##                  mounts (needs an RWX StorageClass: NFS/CephFS/JuiceFS/EFS — TODO(S8): document
+##                  tested options): a self-signed bootstrap certificate first, then the certificates
+##                  uploaded in the admin UI. Automatic ACME issuance is in development (not in this
+##                  release).
+##   cert-manager — this chart renders a cert-manager `Certificate` + relies on a `ClusterIssuer`/
+##                  `Issuer` you already have; the resulting Secret is synced onto the same shared
+##                  layout via TODO(S8) (cert-manager writes one Secret; mgate/postfix/dovecot
+##                  expect files — a sync sidecar or CSI driver is required, not yet implemented).
+##   existingSecret — bring your own Secret (tls.crt/tls.key); no ACME flow runs in-cluster.
+## -----------------------------------------------------------------------------------------------
+certs:
+  mode: mgate # mgate | cert-manager | existingSecret
+  persistence:
+    size: 1Gi
+    storageClass: "" # MUST support ReadWriteMany for mode=mgate with >1 postfix/dovecot/api replica
+    accessMode: ReadWriteMany
+  certManager:
+    issuerRef:
+      name: ""
+      kind: ClusterIssuer # ClusterIssuer | Issuer
+  existingSecret:
+    name: ""
+
+## -----------------------------------------------------------------------------------------------
+## Ingress (HTTP routes for api/webmail). Mirrors the Traefik routing rules of docker-compose:
+## PathPrefix /api/v1/mail -> webmail:8082 (higher priority), everything else -> api:8080,
+## HostRegexp autoconfig/autodiscover/mta-sts -> api:8080.
+## -----------------------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: "" # e.g. nginx, traefik; empty = cluster default IngressClass
+  # Optional (not set by default): throttle POST /api/v1/auth/* at the ingress as a second layer in
+  # front of the built-in brute-force protection. Ready-to-copy nginx-ingress / Traefik examples
+  # are in README.md ("Ограничение частоты запросов на Ingress").
+  annotations: {}
+  # Extra hostnames answered by the api router (autoconfig/autodiscover/mta-sts). Only added when
+  # your ingress controller supports exact Host rules for them (most do); DNS must point here too.
+  extraHosts: []
+  tls:
+    enabled: true
+    # When certs.mode=mgate|cert-manager this is normally left empty and mgate/cert-manager keep
+    # the Secret named `<fullname>-tls` up to date; set explicitly to reuse a different Secret.
+    secretName: ""
+
+## -----------------------------------------------------------------------------------------------
+## NetworkPolicies reproducing the compose `public` (egress-allowed) vs `backend` (internal: true)
+## segmentation. templates/networkpolicy.yaml ships one fixed default policy per
+## component (postgres/valkey/rspamd/clamav/unbound/dovecot/postfix ingress restricted to their
+## known in-cluster clients; api/webmail open to the ingress controller). Disable entirely if your
+## cluster has no NetworkPolicy controller installed (policies would be silently unenforced anyway).
+## -----------------------------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  # Renders an Egress policy that allows every release pod to reach DNS (port 53) — and NOTHING
+  # else. Any NetworkPolicy with `Egress` in policyTypes isolates the pods it selects for egress,
+  # so enabling this alone blocks api -> postgres, webmail -> dovecot/postfix, etc. The chart has no
+  # per-component egress rules yet (TODO(S8)), so keep it false unless you add complete egress
+  # rules for every component yourself (extraPolicies) under a namespace default-deny-egress.
+  allowDnsEgress: false
+  # Extra hand-written NetworkPolicies appended verbatim (each item = a full NetworkPolicy `spec`,
+  # plus `name` for the suffix) — use this to open access for something outside the chart (a
+  # monitoring namespace scraping /metrics, an external mail-tester relay, etc) without editing
+  # templates/networkpolicy.yaml. Example:
+  #   extraPolicies:
+  #     - name: allow-monitoring
+  #       podSelector: { matchLabels: { app.kubernetes.io/component: api } }
+  #       policyTypes: [Ingress]
+  #       ingress:
+  #         - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+  #           ports: [{ protocol: TCP, port: 8081 }]
+  extraPolicies: []
+
+## -----------------------------------------------------------------------------------------------
+## RBAC / ServiceAccount
+## -----------------------------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+## Pod-level defaults applied unless a component overrides them (see each component's `securityContext`
+## in the matching template — postfix/dovecot/clamav run as their own image-baked uid, others as 65532).
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false # TODO(S1): flip to true for api/webmail/worker once /tmp + cache
+                                 # paths are confirmed and mounted as emptyDir in the real images
+  capabilities:
+    drop: ["ALL"]

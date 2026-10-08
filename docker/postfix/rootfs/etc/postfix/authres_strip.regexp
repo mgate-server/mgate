@@ -1,0 +1,5 @@
+# header_checks (default cleanup and cleanup-submission): drop incoming Authentication-Results
+# headers that claim this server's authserv-id (RFC 8601 section 5) and incoming Rspamd marker
+# headers (X-Rspamd-Queue-Id, X-Rspamd-Server).
+# Placeholder: mgate-postfix-init overwrites this file at container start with the rules for
+# MGATE_HOSTNAME. Rspamd's own headers are added by the milter after header_checks and are kept.

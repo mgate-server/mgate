@@ -1,0 +1,4 @@
+#!/command/with-contenv sh
+# mgate-agent: syslog server on /dev/log (-> stdout + Valkey stream mgate:logs), control API
+# on :7070 (queue, reload), watcher on /certs/default (-> postfix reload).
+exec /usr/local/bin/mgate-agent --role postfix

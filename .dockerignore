@@ -1,0 +1,17 @@
+# Build context excludes for docker build (docker/web, docker/postfix, docker/firewall, ...)
+.git
+.gitignore
+.github
+web/**/node_modules
+web/**/dist
+**/*.log
+.env
+.env.*
+!.env.example
+backups
+docs
+tests
+deploy/helm
+*.md
+!README.md
+.DS_Store

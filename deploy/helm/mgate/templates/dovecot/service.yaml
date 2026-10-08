@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  # Bare Service name — see templates/api/service.yaml comment. Postfix reaches LMTP at
+  # "dovecot:24" and SASL at "dovecot:12345"; api/worker use doveadm ("dovecot:8080"); the webmail
+  # gateway uses the internal IMAP listener with STARTTLS at "dovecot:1143" (values
+  # webmail.upstream.imapAddr). Public IMAP/POP3 ports are in service-lb.yaml only.
+  name: dovecot
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "dovecot") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "mgate.selectorLabels" (dict "root" . "component" "dovecot") | nindent 4 }}
+  ports:
+    - { name: imap-webmail, port: 1143, targetPort: imap-webmail, protocol: TCP }
+    - { name: lmtp, port: 24, targetPort: lmtp, protocol: TCP }
+    - { name: auth, port: 12345, targetPort: auth, protocol: TCP }
+    - { name: quota, port: 12340, targetPort: quota, protocol: TCP }
+    - { name: doveadm, port: 8080, targetPort: doveadm, protocol: TCP }
+    - { name: metrics, port: 9900, targetPort: metrics, protocol: TCP }
+    - { name: agent, port: 7070, targetPort: agent, protocol: TCP }

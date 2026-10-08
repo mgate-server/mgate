@@ -1,0 +1,15 @@
+#!/bin/bash
+# Container healthcheck (dovecot image): master answers doveadm + IMAP greeting on :143.
+set -euo pipefail
+
+doveadm service status >/dev/null 2>&1 || { echo "dovecot master is not answering"; exit 1; }
+
+exec 3<>/dev/tcp/127.0.0.1/143 || { echo "port 143 closed"; exit 1; }
+greeting=""
+IFS= read -r -t 5 greeting <&3 || true
+printf 'a LOGOUT\r\n' >&3 || true
+exec 3>&-
+case "$greeting" in
+    "* OK"*) exit 0 ;;
+    *) echo "unexpected IMAP greeting: ${greeting:-<none>}"; exit 1 ;;
+esac

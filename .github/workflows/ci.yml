@@ -1,0 +1,154 @@
+# Continuous integration for the public MGate repository.
+# Every job mirrors a Makefile target (docs/TESTING.md) so CI and local runs stay equivalent.
+# CI only lints, tests and builds. Images are never pushed and releases are never created from
+# CI: publication is done by the maintainers' release tooling, and accepted pull requests land in
+# the public repository with the next release.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOCKER_BUILDKIT: "1"
+  # Keep in sync with the Makefile (helm-lint / helm-template use the same image).
+  HELM_IMAGE: alpine/helm:4.3.0
+  ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12
+  HADOLINT_IMAGE: hadolint/hadolint:v2.15.1-alpine
+
+jobs:
+  web:
+    name: web (install, typecheck, lint, test, build)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+      # make typecheck-web
+      - name: typecheck
+        run: npm run typecheck
+      # make lint-web
+      - name: lint
+        run: npm run lint
+      # make test-web
+      - name: test
+        run: npm test
+      # make build-web
+      - name: build
+        run: npm run build
+      - name: npm audit (production deps, informational)
+        # TODO(S6): make blocking once the dependency tree is stable.
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+
+  compose-config:
+    name: compose config (.env.example)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prepare .env from .env.example
+        run: cp .env.example .env
+      # make compose-config
+      - name: docker-compose.yml (all profiles)
+        run: |
+          docker compose -f docker-compose.yml \
+            --profile clamav --profile backup --profile firewall config --quiet
+      - name: docker-compose.yml + build override
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.build.yml \
+            --profile clamav --profile backup --profile firewall config --quiet
+      - name: docker-compose.yml + build + dev overrides
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.build.yml -f docker-compose.dev.yml \
+            --profile clamav --profile backup --profile firewall config --quiet
+
+  validate-configs:
+    name: validate-configs (daemon configs inside the images)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      # make validate-configs = scripts/validate-configs.sh: docker compose config matrix;
+      # postfix/dovecot built with --target base (configs + init script only, no mgate-agent
+      # binary — that stage is skipped, so this needs no MGATE_AGENT_IMAGE) + `postfix check` /
+      # `doveconf -n`; rspamd (single-stage image) + `rspamadm configtest`;
+      # unbound + `unbound-checkconf`; traefik start-up without error-level log lines.
+      # Build context is the repository root for every image (as in docker-compose.build.yml).
+      - name: Prepare .env from .env.example
+        run: cp .env.example .env
+      - name: make validate-configs
+        run: make validate-configs
+
+  build-images:
+    name: build public images (no mgate-agent dependency)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prepare .env from .env.example
+        run: cp .env.example .env
+      # web, rspamd, unbound, traefik, backup need no ${MGATE_AGENT_IMAGE}. The postfix/dovecot/
+      # firewall Dockerfiles do (COPY --from=${MGATE_AGENT_IMAGE}), so they are not built here:
+      # postfix and dovecot are exercised up to their agent-free `base` stage by
+      # `make validate-configs` above, while firewall (single runtime stage, no `base` target)
+      # is only built as part of the release. TODO(S1): add postfix/dovecot/firewall here too, with
+      # MGATE_AGENT_IMAGE pinned to a published ghcr.io/mgate-server/mgate-agent release tag.
+      - name: docker compose build (web rspamd unbound traefik backup)
+        run: |
+          docker compose --env-file .env -f docker-compose.yml -f docker-compose.build.yml \
+            build web rspamd unbound traefik backup
+
+  hadolint:
+    name: hadolint (Dockerfiles)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: hadolint every first-party Dockerfile
+        # -t error: fail the job only on error-level findings; DL3008 (unpinned apt package
+        # versions — deliberate, so `apt-get upgrade` keeps pulling current Debian security
+        # fixes) and DL3025/DL3066 (info-level) stay visible in the log but non-blocking.
+        run: |
+          status=0
+          while IFS= read -r -d '' f; do
+            echo "::group::${f}"
+            docker run --rm -i "${HADOLINT_IMAGE}" hadolint -t error - < "${f}" || status=1
+            echo "::endgroup::"
+          done < <(find docker -name Dockerfile -print0 | sort -z)
+          exit "${status}"
+
+  helm:
+    name: helm lint / template
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      # make helm-lint
+      - name: helm lint
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/work" -w /work "${HELM_IMAGE}" lint deploy/helm/mgate
+      # make helm-template
+      - name: helm template
+        run: |
+          docker run --rm -v "${GITHUB_WORKSPACE}:/work" -w /work "${HELM_IMAGE}" \
+            template mgate deploy/helm/mgate > /dev/null
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: actionlint (includes shellcheck for run blocks)
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/repo" -w /repo "${ACTIONLINT_IMAGE}" -color

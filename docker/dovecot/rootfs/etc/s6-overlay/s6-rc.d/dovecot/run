@@ -1,0 +1,12 @@
+#!/command/with-contenv bash
+# Dovecot master in the foreground, supervised by s6. Logs go to syslog (/dev/log, served by
+# mgate-agent) unless MGATE_LOG_STDOUT=1 (log_path = /dev/stderr, see mgate-dovecot-init).
+# shellcheck disable=SC2034 # read by common.sh
+MGATE_COMPONENT=dovecot
+# shellcheck source=/dev/null
+. /usr/local/lib/mgate/common.sh
+case "${MGATE_LOG_STDOUT:-0}" in
+    1|true|yes) ;;
+    *) wait_for_syslog_socket 15 || true ;;
+esac
+exec /usr/sbin/dovecot -F

@@ -1,0 +1,122 @@
+#!/bin/bash
+# Render the runtime part of the Dovecot configuration from the environment.
+# Runs once per container start as the s6-rc oneshot "mgate-init" (before mgate-agent and
+# dovecot). Idempotent: safe to re-run by hand (`mgate-dovecot-init`) for debugging.
+set -euo pipefail
+
+# shellcheck disable=SC2034 # read by common.sh
+MGATE_COMPONENT=dovecot
+# shellcheck source=/dev/null
+. /usr/local/lib/mgate/common.sh
+
+require_env MGATE_HOSTNAME POSTGRES_MAIL_PASSWORD MGATE_INTERNAL_TOKEN DOVEADM_API_KEY
+
+: "${POSTGRES_HOST:=postgres}"
+: "${POSTGRES_PORT:=5432}"
+: "${POSTGRES_DB:=mgate}"
+: "${POSTGRES_MAIL_USER:=mgate_mail}"
+: "${MGATE_BACKEND_SUBNET:=172.30.1.0/24}"
+: "${MGATE_API_INTERNAL_URL:=http://api:8081}"
+: "${RSPAMD_CONTROLLER_PASSWORD:=}"
+: "${MGATE_LOG_STDOUT:=0}"
+: "${MGATE_LOG_LEVEL:=info}"
+
+[[ "$MGATE_HOSTNAME" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] \
+    || die "MGATE_HOSTNAME must be a fully qualified domain name (got '$MGATE_HOSTNAME')"
+[[ "$POSTGRES_HOST" =~ ^[A-Za-z0-9._-]+$ ]] || die "POSTGRES_HOST must be a host name or IP"
+is_uint "$POSTGRES_PORT" || die "POSTGRES_PORT must be an integer"
+[[ "$MGATE_BACKEND_SUBNET" =~ ^[0-9a-fA-F:.]+/[0-9]{1,3}$ ]] \
+    || die "MGATE_BACKEND_SUBNET must be a CIDR (got '$MGATE_BACKEND_SUBNET')"
+[[ "$MGATE_API_INTERNAL_URL" =~ ^https?://[A-Za-z0-9._-]+(:[0-9]+)?$ ]] \
+    || die "MGATE_API_INTERNAL_URL must look like http://host:port (got '$MGATE_API_INTERNAL_URL')"
+check_secret_charset MGATE_INTERNAL_TOKEN
+check_secret_charset DOVEADM_API_KEY
+
+# Percent-encode a value for use in URL userinfo.
+urlencode() {
+    local s="$1" out="" c i
+    for ((i = 0; i < ${#s}; i++)); do
+        c="${s:i:1}"
+        case "$c" in
+            [A-Za-z0-9._~-]) out+="$c" ;;
+            *) out+="$(printf '%%%02X' "'$c")" ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
+api_host_port="${MGATE_API_INTERNAL_URL#*://}"
+api_scheme="${MGATE_API_INTERNAL_URL%%://*}"
+# Nonce for the auth policy password hash: stable per installation, derived from the token.
+policy_nonce="$(printf 'mgate-dovecot-policy:%s' "$MGATE_INTERNAL_TOKEN" | sha256sum | cut -c1-32)"
+
+# --- runtime.conf.ext (secrets; 0640 root:dovecot) ------------------------------------------
+{
+    echo "# Rendered by mgate-dovecot-init at container start - do not edit."
+    echo "hostname = $(dovecot_quote "$MGATE_HOSTNAME")"
+    echo "postmaster_address = $(dovecot_quote "postmaster@$MGATE_HOSTNAME")"
+    # webmail (backend network) may forward the real client IP via IMAP ID and counts as secured.
+    echo "login_trusted_networks = 127.0.0.0/8 $MGATE_BACKEND_SUBNET"
+    echo
+    echo "pgsql $POSTGRES_HOST {"
+    echo "  parameters {"
+    echo "    port = $POSTGRES_PORT"
+    echo "    dbname = $(dovecot_quote "$POSTGRES_DB")"
+    echo "    user = $(dovecot_quote "$POSTGRES_MAIL_USER")"
+    echo "    password = $(dovecot_quote "$POSTGRES_MAIL_PASSWORD")"
+    echo "    connect_timeout = 5"
+    echo "    application_name = dovecot"
+    echo "  }"
+    echo "}"
+    echo
+    echo "passdb lua {"
+    echo "  lua_settings {"
+    echo "    mgate_api_url = $(dovecot_quote "$MGATE_API_INTERNAL_URL/internal/v1/dovecot/passdb")"
+    echo "    mgate_internal_token = $(dovecot_quote "$MGATE_INTERNAL_TOKEN")"
+    echo "  }"
+    echo "}"
+    echo
+    echo "auth_policy_server_url = $(dovecot_quote "$MGATE_API_INTERNAL_URL/internal/v1/dovecot/policy")"
+    echo "auth_policy_server_api_header = $(dovecot_quote "Authorization: Bearer $MGATE_INTERNAL_TOKEN")"
+    echo "auth_policy_hash_nonce = $policy_nonce"
+    echo
+    echo "doveadm_api_key = $(dovecot_quote "$DOVEADM_API_KEY")"
+    echo
+    echo "event_exporter mgate {"
+    echo "  http_post_url = $(dovecot_quote "$api_scheme://dovecot:$(urlencode "$MGATE_INTERNAL_TOKEN")@$api_host_port/internal/v1/events/dovecot")"
+    echo "}"
+    case "$MGATE_LOG_STDOUT" in
+        1|true|yes) echo; echo "log_path = /dev/stderr" ;;
+    esac
+    if [ "$MGATE_LOG_LEVEL" = "debug" ] || [ "$MGATE_LOG_LEVEL" = "trace" ]; then
+        echo "log_debug = category=auth OR category=lmtp OR category=sieve"
+    fi
+} | write_secret /etc/dovecot/mgate/runtime.conf.ext dovecot
+
+# --- Rspamd controller credentials for IMAPSieve learning (vmail-readable) -------------------
+if [ -n "$RSPAMD_CONTROLLER_PASSWORD" ]; then
+    printf 'Password: %s\n' "$RSPAMD_CONTROLLER_PASSWORD" \
+        | write_secret /etc/dovecot/mgate/rspamd-controller.headers vmail
+else
+    rm -f /etc/dovecot/mgate/rspamd-controller.headers
+    warn "RSPAMD_CONTROLLER_PASSWORD is empty: spam/ham learning from Junk moves is disabled"
+fi
+
+# --- Storage -----------------------------------------------------------------------------------
+# /var/vmail is a named volume; only fix the top directory (never chown -R a mail store).
+install -d -m 0750 -o vmail -g vmail /var/vmail
+
+# --- TLS -------------------------------------------------------------------------------------
+ensure_bootstrap_cert
+
+# --- Global Sieve scripts: recompile if changed (e.g. bind-mounted overrides) ---------------
+for script in /etc/dovecot/sieve/before.d/*.sieve /etc/dovecot/sieve/*.sieve; do
+    [ -e "$script" ] || continue
+    bin="${script%.sieve}.svbin"
+    if [ ! -e "$bin" ] || [ "$script" -nt "$bin" ]; then
+        sievec "$script" || die "sievec failed for $script"
+    fi
+done
+
+doveconf -n >/dev/null || die "doveconf rejected the configuration"
+log "configuration rendered for $MGATE_HOSTNAME (db $POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB)"

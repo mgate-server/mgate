@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mgate.fullname" . }}-dovecot
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mgate.labels" (dict "root" . "component" "dovecot") | nindent 4 }}
+spec:
+  serviceName: dovecot
+  replicas: {{ .Values.dovecot.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mgate.selectorLabels" (dict "root" . "component" "dovecot") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mgate.selectorLabels" (dict "root" . "component" "dovecot") | nindent 8 }}
+      {{- with .Values.dovecot.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mgate.serviceAccountName" . }}
+      # Dovecot's s6-overlay entrypoint (/init) runs as root by design (master spawns imap-login
+      # etc. as root, then chroots/setuid's them) — see templates/postfix/statefulset.yaml for the
+      # full rationale (same image family, same "mgate.podSecurityContext" fix).
+      securityContext:
+        {{- include "mgate.podSecurityContext" (dict "root" . "override" (dict "runAsNonRoot" false)) | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "mgate.dnsConfig" . | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: dovecot
+          image: {{ include "mgate.image" (dict "root" . "repository" .Values.dovecot.image.repository "tag" .Values.dovecot.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "mgate.configMapName" . }}
+            - secretRef:
+                name: {{ include "mgate.secretsName" . }}
+          ports:
+            - { name: imap, containerPort: 143, protocol: TCP }
+            - { name: imaps, containerPort: 993, protocol: TCP }
+            - { name: pop3, containerPort: 110, protocol: TCP }
+            - { name: pop3s, containerPort: 995, protocol: TCP }
+            - { name: sieve, containerPort: 4190, protocol: TCP }
+            # Internal IMAP listener for the webmail gateway (not in the public LoadBalancer
+            # Service; templates/networkpolicy.yaml admits webmail pods only).
+            - { name: imap-webmail, containerPort: 1143, protocol: TCP }
+            - { name: lmtp, containerPort: 24, protocol: TCP }
+            - { name: auth, containerPort: 12345, protocol: TCP }
+            - { name: quota, containerPort: 12340, protocol: TCP }
+            - { name: doveadm, containerPort: 8080, protocol: TCP }
+            - { name: metrics, containerPort: 9900, protocol: TCP }
+            - { name: agent, containerPort: 7070, protocol: TCP }
+          # Same exec healthcheck as `docker/dovecot/Dockerfile`'s own HEALTHCHECK / compose's
+          # `test: ["CMD", "/usr/local/bin/mgate-healthcheck"]` (`doveadm service status` + an
+          # IMAP greeting on :143) — NOT the mgate-agent's `/v1/health`, which only proves the
+          # agent sidecar-in-process is up, not Dovecot itself.
+          livenessProbe:
+            exec: { command: ["/usr/local/bin/mgate-healthcheck"] }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            exec: { command: ["/usr/local/bin/mgate-healthcheck"] }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            # Mirrors compose `cap_add` for dovecot exactly: NET_BIND_SERVICE for
+            # 143/993/110/995/4190, CHOWN/SETUID/SETGID/DAC_OVERRIDE because the master runs as
+            # root and drops to dovecot/vmail per process, SYS_CHROOT because *-login processes are
+            # chrooted into /run/dovecot/login (imap-login fails without it), KILL because root
+            # processes signal processes of other users (anvil ends the sessions of `doveadm kick`,
+            # used when a mailbox is disabled or its password changes). NOT `runAsUser: 5000`
+            # (vmail) — that forced Dovecot's own root master process itself to start as uid 5000,
+            # which breaks chroot/setuid/privileged-port binding entirely; vmail-owned files (the
+            # Maildir tree) are reached via CAP_DAC_OVERRIDE/CAP_CHOWN instead, exactly like compose
+            # (which also does not set a container `user:` for this service).
+            {{- include "mgate.securityContext" (dict "root" . "override" (dict "capabilities" (dict "drop" (list "ALL") "add" (list "NET_BIND_SERVICE" "CHOWN" "SETUID" "SETGID" "DAC_OVERRIDE" "SYS_CHROOT" "KILL")))) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.dovecot.resources | nindent 12 }}
+          volumeMounts:
+            - { name: vmail, mountPath: /var/vmail }
+            - name: certs
+              mountPath: /certs
+              readOnly: {{ include "mgate.certsReadOnly" (dict "root" . "component" "dovecot") }}
+      volumes:
+        {{- include "mgate.certsVolume" . | nindent 8 }}
+      {{- with .Values.dovecot.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dovecot.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dovecot.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: vmail
+      spec:
+        accessModes: [{{ .Values.dovecot.persistence.accessMode | quote }}]
+        {{- if or .Values.dovecot.persistence.storageClass .Values.global.storageClass }}
+        storageClassName: {{ .Values.dovecot.persistence.storageClass | default .Values.global.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.dovecot.persistence.size }}

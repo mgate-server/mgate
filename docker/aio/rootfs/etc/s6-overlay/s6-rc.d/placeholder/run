@@ -1,0 +1,7 @@
+#!/command/execlineb -P
+# TODO(S8): replace this placeholder longrun service with the real per-process s6-rc services
+# listed in docker/aio/README.md (postgres, valkey, unbound, rspamd, clamav, postfix, dovecot,
+# mgate-migrate (oneshot), the mgate backend roles, traefik). This one only proves
+# the s6-overlay skeleton boots, supervises a process, and forwards signals correctly.
+foreground { s6-echo "mgate-aio placeholder: no real services wired yet" }
+s6-pause
