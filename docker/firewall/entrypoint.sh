@@ -9,6 +9,6 @@ log() { echo "[firewall-entrypoint] $*"; }
 log "loading base ruleset from /etc/mgate/nftables.conf"
 nft delete table inet mgate_filter 2>/dev/null || true
 nft -f /etc/mgate/nftables.conf
-log "table inet mgate_filter loaded; set mgate_ban ready"
+log "table inet mgate_filter loaded; sets mgate_ban and mgate_ban6 ready"
 
 exec "$@"

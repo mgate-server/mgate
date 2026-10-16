@@ -1,7 +1,7 @@
 {
   "name": "@mgate/spa",
   "private": true,
-  "version": "2026.10.1",
+  "version": "2026.10.2",
   "description": "MGate SPA: /login, /admin, /account, /mail.",
   "type": "module",
   "scripts": {

@@ -124,7 +124,7 @@ compose pull && docker compose up -d` (миграции применяются �
 | **Производительный** | 8 vCPU / 16 GB | до 10 000 ящиков |
 | **Кластерный (Helm)** | 16+ vCPU / 32+ GB | 50 000+ ящиков, горизонтальное масштабирование |
 
-## Мониторинг (`/metrics`)
+## Мониторинг (`/metrics`) и Observability
 
 `GET http://api:8081/metrics` (Prometheus text exposition format,
 backend-only — **не публикуется через Traefik**; порт `8081` нельзя
@@ -132,10 +132,12 @@ backend-only — **не публикуется через Traefik**; порт `8
 коды ответов, размер очередей БД-джобов (`jobs` таблица, SKIP LOCKED),
 статус фоновых задач (лицензия/log-ingest), количество
 активных сессий. Dovecot дополнительно отдаёт собственные метрики на
-`9900` (`openmetrics`, backend-only) — обе точки предполагается собирать
-внешним Prometheus-совместимым скрейпером через отдельный
-compose-override/sidecar в вашей инфраструктуре мониторинга (в поставку по
-умолчанию не входит; пример Prometheus/Grafana-дашборда пока не приложен).
+`9900` (`openmetrics`, backend-only).
+
+### Готовые шаблоны мониторинга
+- **Правила алертов Prometheus**: [`deploy/prometheus/alerts.yaml`](../deploy/prometheus/alerts.yaml) — мониторинг доступности API/Dovecot, глубины очереди Postfix (>500 писем), всплесков подбора паролей, скорого истечения TLS-сертификатов (<14 дней), сбоев бэкапов и нехватки места на диске (<15%).
+- **Дашборд Grafana**: [`deploy/grafana/dashboards/mgate-overview.json`](../deploy/grafana/dashboards/mgate-overview.json) — визуализация глубины очередей, сессий Dovecot, времени жизни сертификатов, динамики авторизаций (Success/Fail) и HTTP-трафика.
+- **Проверка бэкапов**: `./scripts/verify-backup.sh [SNAPSHOT_ID]` (или `make verify-backup`) — автоматическая проверка целостности репозитория Restic и валидности дампа PostgreSQL через `pg_restore --list`.
 
 ## Типовые инциденты
 

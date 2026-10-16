@@ -6,7 +6,7 @@
     "license": {
       "name": "LicenseRef-Proprietary"
     },
-    "version": "2026.10.1"
+    "version": "2026.10.2"
   },
   "paths": {
     "/api/v1/account": {

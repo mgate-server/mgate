@@ -264,13 +264,11 @@ describe('MailFolderPage', () => {
     });
 
     it('reports a message as spam by moving it to the spam folder', async () => {
-      const mock = open({ 'PATCH /api/v1/mail/messages/inbox.1.1': () => undefined });
+      const mock = open({ 'POST /api/v1/mail/messages/inbox.1.1/learn-spam': () => undefined });
       await screen.findByRole('heading', { name: 'Subject 1' });
       await userEvent.click(screen.getByTitle('В спам'));
       await waitFor(() => expect(location()).toBe('/mail/inbox'));
-      expect(mock.find('PATCH', '/api/v1/mail/messages/inbox.1.1')[0]!.body).toEqual({
-        folder: 'spam',
-      });
+      expect(mock.find('POST', '/api/v1/mail/messages/inbox.1.1/learn-spam')).toHaveLength(1);
     });
 
     it('moves a message to a chosen folder (current folder and Drafts are not offered)', async () => {
@@ -292,19 +290,23 @@ describe('MailFolderPage', () => {
       });
     });
 
-    it('hides the spam button inside the spam folder', async () => {
-      installFetchMock(
+    it('hides the spam button and shows not spam inside the spam folder', async () => {
+      const mock = installFetchMock(
         baseRoutes({
           'GET /api/v1/mail/folders': [
             ...DEFAULT_FOLDERS,
             { id: 'spam', name: 'Junk', role: 'spam', unread_count: 0, total_count: 1 },
           ],
           'GET /api/v1/mail/messages/spam.1.1': mkDetail(1, { id: 'spam.1.1', folder: 'spam' }),
+          'POST /api/v1/mail/messages/spam.1.1/learn-ham': () => undefined,
         }),
       );
       renderAt(<MailFolderPage />, { route: '/mail/spam/spam.1.1', path: PATH });
       await screen.findByRole('heading', { name: 'Subject 1' });
       expect(screen.queryByTitle('В спам')).not.toBeInTheDocument();
+      await userEvent.click(screen.getByTitle('Не спам'));
+      await waitFor(() => expect(location()).toBe('/mail/spam'));
+      expect(mock.find('POST', '/api/v1/mail/messages/spam.1.1/learn-ham')).toHaveLength(1);
     });
 
     it('hides the archive button inside the archive', async () => {

@@ -346,6 +346,7 @@
       "tooLarge": "This message is too large to display in the browser. Download it and open it in a mail client.",
       "remoteImagesDisabled": "Remote images are turned off in your mail settings",
       "spam": "Mark as spam",
+      "notSpam": "Not spam",
       "moveTo": "Move to folder…"
     },
     "authResults": {

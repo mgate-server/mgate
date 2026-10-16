@@ -60,12 +60,12 @@ smtputf8_enable = yes
 
 # --- Anti-abuse / limits (anvil) -------------------------------------------------------------
 anvil_rate_time_unit = 60s
-smtpd_client_connection_count_limit = 20
-smtpd_client_connection_rate_limit = 60
-smtpd_client_message_rate_limit = 120
-smtpd_client_recipient_rate_limit = 600
+smtpd_client_connection_count_limit = 50
+smtpd_client_connection_rate_limit = 120
+smtpd_client_message_rate_limit = 240
+smtpd_client_recipient_rate_limit = 1000
 smtpd_client_new_tls_session_rate_limit = 120
-smtpd_client_auth_rate_limit = 30
+smtpd_client_auth_rate_limit = 120
 smtpd_client_event_limit_exceptions = $mynetworks
 smtpd_soft_error_limit = 5
 smtpd_hard_error_limit = 15

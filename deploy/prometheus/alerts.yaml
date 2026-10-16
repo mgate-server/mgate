@@ -1,0 +1,77 @@
+groups:
+  - name: mgate_alerts
+    rules:
+      - alert: MGateApiDown
+        expr: up{job="mgate-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MGate API service is unreachable"
+          description: "MGate API on :8081 has been down for more than 2 minutes."
+
+      - alert: MGateDovecotDown
+        expr: up{job="dovecot"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dovecot stats exporter is unreachable"
+          description: "Dovecot metrics endpoint on :9900 has been down for more than 2 minutes."
+
+      - alert: MGateHighHttp5xxRate
+        expr: >-
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total[5m])) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP 5xx error rate in MGate API"
+          description: "HTTP 5xx error rate is above 5% over the last 5 minutes."
+
+      - alert: MGateMailQueueHigh
+        expr: mgate_postfix_queue_length > 500
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postfix mail queue is high"
+          description: "Mail queue contains {{ $value }} messages for more than 15 minutes."
+
+      - alert: MGateHighAuthFailures
+        expr: sum(rate(dovecot_auth_failed_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate of authentication failures"
+          description: "Authentication failures exceed 10/sec for 5m. Possible credential stuffing or brute-force attack."
+
+      - alert: MGateCertificateExpiringSoon
+        expr: mgate_certificate_expiry_timestamp_seconds - time() < 14 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS certificate expiring soon"
+          description: "Certificate for {{ $labels.domain }} expires in less than 14 days."
+
+      - alert: MGateBackupMissingOrFailed
+        expr: time() - mgate_last_backup_timestamp_seconds > 30 * 3600
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful MGate backup in 30 hours"
+          description: "Last successful backup timestamp was more than 30 hours ago."
+
+      - alert: MGateDiskSpaceLow
+        expr: node_filesystem_avail_bytes{mountpoint=~"/var/vmail|/var/lib/postgresql|/backups"} / node_filesystem_size_bytes < 0.15
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space low on critical storage"
+          description: "Storage {{ $labels.mountpoint }} has less than 15% free space remaining."

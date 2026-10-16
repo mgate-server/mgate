@@ -1,7 +1,7 @@
 {
   "name": "@mgate/extensions",
   "private": true,
-  "version": "2026.10.1",
+  "version": "2026.10.2",
   "description": "Extension SDK + registry: types, the runtime registry, and the <ProFeature> gate the SPA's Pro pages (apps/spa/src/pro) are built against. Consumed as TS source directly, no build step.",
   "type": "module",
   "main": "./src/index.ts",

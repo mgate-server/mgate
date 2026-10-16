@@ -197,6 +197,12 @@ export const mailApi = {
       json: patch,
     }),
 
+  learnSpam: (id: string) =>
+    request<MessageSummary | undefined>('POST', `/messages/${encodeURIComponent(id)}/learn-spam`),
+
+  learnHam: (id: string) =>
+    request<MessageSummary | undefined>('POST', `/messages/${encodeURIComponent(id)}/learn-ham`),
+
   deleteMessage: (id: string) => request<void>('DELETE', `/messages/${encodeURIComponent(id)}`),
 
   thread: (id: string, signal?: AbortSignal) =>

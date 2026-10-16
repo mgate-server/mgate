@@ -168,7 +168,11 @@ function FolderView() {
     onSuccess: () => leaveMessage(messageId!),
   });
   const spamMutation = useMutation({
-    mutationFn: () => mailApi.patchMessage(messageId!, { folder: 'spam' }),
+    mutationFn: () => mailApi.learnSpam(messageId!),
+    onSuccess: () => leaveMessage(messageId!),
+  });
+  const notSpamMutation = useMutation({
+    mutationFn: () => mailApi.learnHam(messageId!),
     onSuccess: () => leaveMessage(messageId!),
   });
   const deleteMutation = useMutation({
@@ -182,6 +186,7 @@ function FolderView() {
     archiveMutation.isPending ||
     moveMutation.isPending ||
     spamMutation.isPending ||
+    notSpamMutation.isPending ||
     deleteMutation.isPending;
   const actionError =
     flagMutation.error ??
@@ -189,6 +194,7 @@ function FolderView() {
     archiveMutation.error ??
     moveMutation.error ??
     spamMutation.error ??
+    notSpamMutation.error ??
     deleteMutation.error;
 
   // A stale id (the mailbox changed under us) is not worth a retry: show it and refresh the list.
@@ -325,6 +331,7 @@ function FolderView() {
             remoteImages={prefs.remote_images}
             canArchive={role !== 'archive'}
             canSpam={role !== 'spam'}
+            canNotSpam={role === 'spam'}
             moveTargets={moveTargets(folders ?? [], folderId)}
             busy={busy}
             thread={
@@ -343,6 +350,7 @@ function FolderView() {
             onForward={() => goCompose({ forward: openMessage.id })}
             onArchive={() => archiveMutation.mutate()}
             onSpam={() => spamMutation.mutate()}
+            onNotSpam={() => notSpamMutation.mutate()}
             onMove={(target) => moveMutation.mutate(target)}
             onDelete={() => {
               if (inTrash && !confirm(t('mail.reader.confirmDeleteForever'))) return;

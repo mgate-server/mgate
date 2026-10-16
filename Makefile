@@ -164,6 +164,9 @@ backup: ## Выполнить резервное копирование прям
 restore: ## Восстановить из резервной копии (интерактивно; SNAPSHOT=<id>, по умолчанию latest)
 	$(COMPOSE) --profile restore run --rm restore /usr/local/bin/restore.sh $(SNAPSHOT)
 
+verify-backup: ## Проверить целостность репозитория бэкапов и валидность дампа БД
+	$(COMPOSE) --profile backup run --rm backup /usr/local/bin/verify-backup.sh $(SNAPSHOT)
+
 # --- Генерация API-контракта (нет локального cargo: `mgate openapi` запускается
 #     внутри скачанного образа backend'а) -----------------------------------------------------
 

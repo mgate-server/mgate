@@ -12,6 +12,7 @@ import {
   Printer,
   Reply,
   ReplyAll,
+  ShieldCheck,
   Star,
   Trash2,
 } from 'lucide-react';
@@ -30,6 +31,8 @@ export interface MessageReaderProps {
   canArchive: boolean;
   /** Hide "spam" in Spam itself (and wherever the message cannot be reported). */
   canSpam?: boolean;
+  /** Show "not spam" inside Spam folder. */
+  canNotSpam?: boolean;
   /** Folders offered by "move to" (the current folder and Drafts already left out). */
   moveTargets?: FolderInfo[];
   /** Thread strip rendered between the header and the body. */
@@ -40,6 +43,7 @@ export interface MessageReaderProps {
   onForward: () => void;
   onArchive: () => void;
   onSpam?: () => void;
+  onNotSpam?: () => void;
   onMove?: (folderId: string) => void;
   onDelete: () => void;
   onToggleFlag: () => void;
@@ -52,6 +56,7 @@ export function MessageReader({
   remoteImages,
   canArchive,
   canSpam = false,
+  canNotSpam = false,
   moveTargets = [],
   thread,
   busy,
@@ -60,6 +65,7 @@ export function MessageReader({
   onForward,
   onArchive,
   onSpam,
+  onNotSpam,
   onMove,
   onDelete,
   onToggleFlag,
@@ -123,6 +129,19 @@ export function MessageReader({
               aria-label={t('mail.reader.spam')}
             >
               <AlertOctagon className="h-4 w-4" />
+            </Button>
+          ) : null}
+          {canNotSpam && onNotSpam ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={onNotSpam}
+              title={t('mail.reader.notSpam')}
+              aria-label={t('mail.reader.notSpam')}
+              className="text-mg-success hover:text-mg-success hover:bg-mg-success/10"
+            >
+              <ShieldCheck className="h-4 w-4" />
             </Button>
           ) : null}
           {onMove && moveTargets.length > 0 ? (

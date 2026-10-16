@@ -29,9 +29,10 @@ RUN set -eux; \
 
 COPY docker/backup/backup.sh /usr/local/bin/backup.sh
 COPY docker/backup/restore.sh /usr/local/bin/restore.sh
+COPY docker/backup/verify-backup.sh /usr/local/bin/verify-backup.sh
 COPY docker/backup/crontab /etc/mgate/backup.crontab.tmpl
 COPY docker/backup/entrypoint.sh /entrypoint.sh
-RUN chmod 755 /usr/local/bin/backup.sh /usr/local/bin/restore.sh /entrypoint.sh
+RUN chmod 755 /usr/local/bin/backup.sh /usr/local/bin/restore.sh /usr/local/bin/verify-backup.sh /entrypoint.sh
 
 # Root on purpose: the job is to read (backup) and write back (restore) the whole mail store,
 # which belongs to vmail (5000:5000, 0750/0700 directories), and the certificate private keys.
