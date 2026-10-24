@@ -27,7 +27,7 @@ const totpSchema = z.object({
  */
 export function LoginPage() {
   const { t } = useTranslation();
-  const { login, status } = useAuth();
+  const { login, status, user } = useAuth();
   const location = useLocation();
 
   const [email, setEmail] = useState('');
@@ -39,7 +39,12 @@ export function LoginPage() {
 
   if (status === 'authenticated') {
     const from = (location.state as { from?: Location } | null)?.from;
-    return <Navigate to={from?.pathname ?? '/'} replace />;
+    if (from?.pathname) {
+      return <Navigate to={from.pathname} replace />;
+    }
+    const defaultPath =
+      user?.role === 'SuperAdmin' || user?.role === 'DomainAdmin' ? '/admin' : '/mail';
+    return <Navigate to={defaultPath} replace />;
   }
 
   const showTotpStep = status === 'totp_required';

@@ -58,7 +58,6 @@ x-backend-env: &backend-env
   MGATE_ACME_DNS_PROVIDER: ${MGATE_ACME_DNS_PROVIDER:-}
   MGATE_ACME_EAB_KID: ${MGATE_ACME_EAB_KID:-}
   MGATE_ACME_EAB_HMAC: ${MGATE_ACME_EAB_HMAC:-}
-  MGATE_LICENSE_SERVER: ${MGATE_LICENSE_SERVER:-https://cloud.mgate.example}
   MGATE_MESSAGE_SIZE_LIMIT: ${MGATE_MESSAGE_SIZE_LIMIT:-52428800}
   DOVEADM_API_KEY: ${DOVEADM_API_KEY}
   RSPAMD_CONTROLLER_PASSWORD: ${RSPAMD_CONTROLLER_PASSWORD}
@@ -316,6 +315,8 @@ services:
       # Written by the backend's ACME client as uid 10001 (/certs/live, /certs/default, 10-certs.yml).
       - certs:/certs
       - proxy-dynamic:/etc/traefik/dynamic
+      # Only the host updater socket is exposed, never the Docker socket or host files.
+      - ./.mgate-updater/run:/run/mgate-updater:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -404,11 +405,7 @@ services:
       valkey:
         condition: service_healthy
     healthcheck:
-      # The worker has no listener. `mgate version` proves the binary and its
-      # runtime libraries are intact; the container itself exits when the worker process dies
-      # (tini PID 1). TODO(S2): a real liveness signal (heartbeat key in Valkey checked by
-      # `mgate healthcheck --worker`, or an internal-only health listener).
-      test: ["CMD", "mgate", "version"]
+      test: ["CMD", "mgate", "healthcheck", "--worker"]
       interval: 30s
       timeout: 5s
       retries: 3

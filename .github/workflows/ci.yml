@@ -58,6 +58,22 @@ jobs:
         continue-on-error: true
         run: npm audit --omit=dev --audit-level=high
 
+  installer:
+    name: installer (syntax, shellcheck, isolated regression tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: bash syntax and shellcheck
+        run: |
+          bash -n scripts/install.sh
+          shellcheck scripts/install.sh
+          bash -n scripts/update.sh
+          shellcheck scripts/update.sh
+      - name: make test-installer
+        run: make test-installer
+      - name: make test-updater
+        run: make test-updater
+
   compose-config:
     name: compose config (.env.example)
     runs-on: ubuntu-24.04

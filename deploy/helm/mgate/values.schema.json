@@ -42,7 +42,6 @@
         "logLevel": { "type": "string", "enum": ["trace", "debug", "info", "warn", "error"] },
         "logFormat": { "type": "string", "enum": ["json", "pretty"] },
         "messageSizeLimit": { "type": "integer", "minimum": 1 },
-        "licenseServer": { "type": "string" },
         "acme": {
           "type": "object",
           "properties": {

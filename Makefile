@@ -15,11 +15,11 @@ COMPOSE       = docker compose -f docker-compose.yml $(if $(wildcard docker-comp
 COMPOSE_BUILD = $(COMPOSE) -f docker-compose.build.yml
 COMPOSE_DEV   = $(COMPOSE_BUILD) -f docker-compose.dev.yml
 
-.PHONY: help init up down restart ps logs pull build images \
+.PHONY: help init remake up down restart ps logs pull build images \
 	image-web image-postfix image-dovecot image-rspamd image-unbound \
 	image-traefik image-backup image-firewall image-aio \
 	dev dev-down dev-web \
-	test-web lint-web typecheck-web build-web web-client-gen openapi-sync \
+	test-web test-installer lint-web typecheck-web build-web web-client-gen openapi-sync \
 	migrate db-shell valkey-shell \
 	compose-config validate-configs helm-lint helm-template smoke \
 	backup restore clean
@@ -33,6 +33,8 @@ help: ## Показать список целей с описанием
 
 init: ## Сгенерировать .env из .env.example со случайными секретами (идемпотентно)
 	@./scripts/gen-secrets.sh
+
+remake: init ## Пересобрать/актуализировать .env (проверка свободных подсетей и секретов)
 
 up: ## Поднять полный стек (образы из MGATE_REGISTRY, без сборки)
 	$(COMPOSE) up -d
@@ -105,6 +107,25 @@ dev-web: ## Запустить Vite dev-сервер SPA (проксирует /
 test-web: ## Тесты фронтенда (npm workspaces)
 	@test -f web/package.json || { echo "web/package.json ещё не создан (см. область frontend)"; exit 1; }
 	cd web && npm run test
+
+test-installer: ## Проверить установщик в изоляции (без установки пакетов и запуска контейнеров)
+	python3 -m unittest discover -s tests/installer -v
+
+.PHONY: update update-check updater-install test-updater test-updater-docker
+update: ## Обновить MGate до стабильного релиза с копией базы и настроек
+	./scripts/update.sh $(if $(VERSION),--version $(VERSION),)
+
+update-check: ## Проверить доступность новой версии MGate
+	./scripts/update.sh --check
+
+updater-install: ## Подключить хостовую службу обновления для административной панели (sudo)
+	./scripts/update.sh --install-service
+
+test-updater: ## Изолированные тесты механизма обновления
+	python3 -m unittest discover -s tests/updater -v
+
+test-updater-docker: ## Проверить обновление и восстановление на одноразовом Compose-стенде
+	MGATE_UPDATER_DOCKER_TEST=1 python3 -m unittest discover -s tests/updater -p test_docker.py -v
 
 lint-web: ## ESLint для фронтенда
 	@test -f web/package.json || { echo "web/package.json ещё не создан (см. область frontend)"; exit 1; }

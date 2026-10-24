@@ -6,7 +6,7 @@
     "license": {
       "name": "LicenseRef-Proprietary"
     },
-    "version": "2026.10.2"
+    "version": "2026.10.4"
   },
   "paths": {
     "/api/v1/account": {
@@ -6242,6 +6242,101 @@
           }
         ]
       }
+    },
+    "/api/v1/admin/updates": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Read release metadata and durable operation state.",
+        "operationId": "status",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "description": "Refresh release metadata",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "503": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Confirm and start one pinned stable release; the host continues after API restart.",
+        "operationId": "start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateJob"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          },
+          "422": {
+            "description": ""
+          },
+          "503": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -8712,6 +8807,121 @@
             "description": "Plain text (≤ 10 KiB)."
           }
         }
+      },
+      "UpdateJob": {
+        "type": "object",
+        "description": "Durable operation state; stages are shared with the host CLI.",
+        "required": [
+          "id",
+          "from_version",
+          "to_version",
+          "actor",
+          "stage",
+          "started_at",
+          "migration_started"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "backup_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "from_version": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "migration_started": {
+            "type": "boolean"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "to_version": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateStatus": {
+        "type": "object",
+        "description": "Availability, pinned version, release metadata and the last operation.",
+        "required": [
+          "supported",
+          "current_version"
+        ],
+        "properties": {
+          "check_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current_version": {
+            "type": "string"
+          },
+          "job": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateJob"
+              }
+            ]
+          },
+          "latest_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supported": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StartUpdate": {
+        "type": "object",
+        "description": "The version shown in the confirmation dialog, never an implicit `latest`.",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       }
     },
     "securitySchemes": {

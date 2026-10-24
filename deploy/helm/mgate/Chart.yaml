@@ -9,8 +9,8 @@ description: |
 type: application
 # version/appVersion are rewritten by the release tooling: one CalVer version (YYYY.M.N, e.g.
 # 2026.10.1) for the whole product, equal to the image tags. Do not edit them by hand.
-version: 2026.10.2
-appVersion: "2026.10.2"
+version: 2026.10.4
+appVersion: "2026.10.4"
 kubeVersion: ">=1.28.0-0"
 home: https://github.com/mgate-server/mgate
 sources:

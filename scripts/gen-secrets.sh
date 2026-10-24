@@ -63,6 +63,129 @@ if [[ -f "$ENV_FILE" ]]; then
   done <"$ENV_FILE"
 fi
 
+# Detect free backend subnet if not set or if current subnet overlaps with existing networks
+auto_subnet=""
+auto_resolver_ip=""
+auto_valkey_ip=""
+auto_subnet_status="UNCHANGED"
+
+if command -v python3 >/dev/null 2>&1; then
+  subnet_raw="${existing[MGATE_BACKEND_SUBNET]:-}"
+  subnet_out=$(python3 - "$subnet_raw" <<'PYCODE' 2>/dev/null || true
+import ipaddress, itertools, json, shutil, subprocess, sys
+
+raw_arg = sys.argv[1].strip() if len(sys.argv) > 1 else ''
+req_subnet = raw_arg if raw_arg else '172.30.1.0/24'
+project_name = 'mgate'
+
+occupied = []
+owned = set()
+
+if shutil.which('docker'):
+    try:
+        net_ids = subprocess.check_output(['docker', 'network', 'ls', '-q'], text=True, stderr=subprocess.DEVNULL).split()
+        if net_ids:
+            nets = json.loads(subprocess.check_output(['docker', 'network', 'inspect', *net_ids], text=True, stderr=subprocess.DEVNULL))
+            for n in nets:
+                is_own = n.get('Labels', {}).get('com.docker.compose.project') == project_name
+                for cfg in n.get('IPAM', {}).get('Config') or []:
+                    sub = cfg.get('Subnet')
+                    if sub:
+                        try:
+                            net_obj = ipaddress.ip_network(sub, strict=False)
+                            if is_own:
+                                owned.add(net_obj)
+                            else:
+                                occupied.append(net_obj)
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+
+if shutil.which('ip'):
+    try:
+        routes = json.loads(subprocess.check_output(['ip', '-j', 'route', 'show'], text=True, stderr=subprocess.DEVNULL))
+        for r in routes:
+            dst = r.get('dst', 'default')
+            if dst != 'default':
+                try:
+                    net_obj = ipaddress.ip_network(dst, strict=False)
+                    if net_obj.prefixlen > 1 and net_obj not in owned:
+                        occupied.append(net_obj)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    try:
+        addrs = json.loads(subprocess.check_output(['ip', '-j', 'addr', 'show'], text=True, stderr=subprocess.DEVNULL))
+        for iface in addrs:
+            for a in iface.get('addr_info', []):
+                if a.get('family') == 'inet' and a.get('local') and a.get('prefixlen'):
+                    try:
+                        net_obj = ipaddress.ip_network(f"{a['local']}/{a['prefixlen']}", strict=False)
+                        if net_obj.prefixlen > 1 and net_obj not in owned:
+                            occupied.append(net_obj)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+def is_free(net):
+    return not any(net.overlaps(o) for o in occupied)
+
+if raw_arg:
+    try:
+        req_net = ipaddress.ip_network(raw_arg, strict=False)
+        if is_free(req_net):
+            base = str(req_net.network_address).rsplit('.', 1)[0]
+            print(f"{req_net} {base}.53 {base}.10 UNCHANGED")
+            sys.exit(0)
+    except Exception:
+        pass
+else:
+    try:
+        req_net = ipaddress.ip_network('172.30.1.0/24')
+        if is_free(req_net):
+            print("172.30.1.0/24 172.30.1.53 172.30.1.10 NEW")
+            sys.exit(0)
+    except Exception:
+        pass
+
+candidates = itertools.chain(
+    (f'172.30.{x}.0/24' for x in range(1, 255)),
+    (f'172.28.{x}.0/24' for x in range(1, 255)),
+    (f'172.29.{x}.0/24' for x in range(1, 255)),
+    (f'172.31.{x}.0/24' for x in range(1, 255)),
+    (f'10.220.{x}.0/24' for x in range(1, 255)),
+    (f'10.221.{x}.0/24' for x in range(1, 255)),
+    (f'10.222.{x}.0/24' for x in range(1, 255)),
+    (f'192.168.{x}.0/24' for x in range(100, 255)),
+)
+
+for c in candidates:
+    cand_net = ipaddress.ip_network(c)
+    if is_free(cand_net):
+        base = str(cand_net.network_address).rsplit('.', 1)[0]
+        status = "CHANGED" if raw_arg else "NEW"
+        print(f"{cand_net} {base}.53 {base}.10 {status}")
+        sys.exit(0)
+
+base = req_subnet.rsplit('.', 1)[0]
+print(f"{req_subnet} {base}.53 {base}.10 UNCHANGED")
+PYCODE
+)
+  if [[ -n "$subnet_out" ]]; then
+    read -r auto_subnet auto_resolver_ip auto_valkey_ip auto_subnet_status <<<"$subnet_out"
+    if [[ "$auto_subnet_status" == "CHANGED" ]]; then
+      existing["MGATE_BACKEND_SUBNET"]="$auto_subnet"
+      existing["MGATE_RESOLVER_IP"]="$auto_resolver_ip"
+      existing["MGATE_VALKEY_IP"]="$auto_valkey_ip"
+      echo "note: resolved network overlap: updated MGATE_BACKEND_SUBNET=$auto_subnet (resolver=$auto_resolver_ip, valkey=$auto_valkey_ip)"
+    fi
+  fi
+fi
+
 # Keys already written to the new file (from .env.example).
 declare -A emitted=()
 
@@ -93,6 +216,12 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       fi
       printf '%s=%s\n' "$key" "$value" >>"$tmp_out"
       changed=$((changed + 1))
+    elif [[ "$key" == "MGATE_BACKEND_SUBNET" && -n "$auto_subnet" ]]; then
+      printf '%s=%s\n' "$key" "$auto_subnet" >>"$tmp_out"
+    elif [[ "$key" == "MGATE_RESOLVER_IP" && -n "$auto_resolver_ip" ]]; then
+      printf '%s=%s\n' "$key" "$auto_resolver_ip" >>"$tmp_out"
+    elif [[ "$key" == "MGATE_VALKEY_IP" && -n "$auto_valkey_ip" ]]; then
+      printf '%s=%s\n' "$key" "$auto_valkey_ip" >>"$tmp_out"
     else
       printf '%s=%s\n' "$key" "$default_value" >>"$tmp_out"
     fi

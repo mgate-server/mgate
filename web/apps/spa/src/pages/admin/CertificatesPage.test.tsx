@@ -28,6 +28,16 @@ const ROWS = [
     not_after: null,
     last_error: 'deploy failed: disk full',
   },
+  {
+    id: '3',
+    name: 'mail.example.org',
+    sans: ['mail.example.org'],
+    source: 'acme',
+    status: 'valid',
+    not_before: '2026-01-01T00:00:00Z',
+    not_after: '2026-04-01T00:00:00Z',
+    last_error: null,
+  },
 ];
 
 function renderPage() {
@@ -64,14 +74,15 @@ describe('CertificatesPage', () => {
     expect(statusTone('valid')).toBe('success');
   });
 
-  it('lists certificates, shows the last error and says that ACME is in development', async () => {
+  it('lists certificates, shows the last error and supports ACME renewal', async () => {
     fetchSpy.mockResolvedValue(new Response(JSON.stringify(ROWS)));
     renderPage();
     expect(await screen.findByText('corp')).toBeInTheDocument();
     expect(screen.getByText('Самоподписанный')).toBeInTheDocument();
     expect(screen.getByText('Загруженный')).toBeInTheDocument();
+    expect(screen.getByText('Let’s Encrypt (ACME)')).toBeInTheDocument();
     expect(screen.getByText('deploy failed: disk full')).toBeInTheDocument();
-    expect(screen.getByText(/Let’s Encrypt — в разработке/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Обновить' })).toBeInTheDocument();
   });
 
   it('uploads with the CSRF header and shows error.details.reason on 422', async () => {

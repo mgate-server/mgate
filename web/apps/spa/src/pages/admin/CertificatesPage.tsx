@@ -24,6 +24,7 @@ export function CertificatesPage() {
   const [certPem, setCertPem] = useState('');
   const [keyPem, setKeyPem] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [renewingId, setRenewingId] = useState<string | null>(null);
 
   const { data: certificates = [], isLoading } = useQuery<CertificateRow[]>({
     queryKey: ['admin', 'certificates'],
@@ -44,6 +45,26 @@ export function CertificatesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'certificates'] });
+    },
+  });
+
+  const renewMutation = useMutation({
+    mutationFn: async (id: string) => {
+      setRenewingId(id);
+      const res = await fetchApi(`/api/v1/admin/certificates/${id}/renew`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(await readApiError(res, 'Failed to renew certificate'));
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'certificates'] });
+      setRenewingId(null);
+    },
+    onError: (err: Error) => {
+      setRenewingId(null);
+      alert(err.message);
     },
   });
 
@@ -165,6 +186,16 @@ export function CertificatesPage() {
       header: '',
       render: (row) => (
         <div className="flex justify-end gap-2">
+          {row.source === 'acme' && (
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={renewingId === row.id}
+              onClick={() => renewMutation.mutate(row.id)}
+            >
+              {t('admin.certs.renew', 'Обновить')}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="danger"
@@ -195,7 +226,7 @@ export function CertificatesPage() {
       <div className="border-mg-border-subtle bg-mg-surface-subtle/40 text-mg-text-muted rounded-lg border p-3 text-xs leading-relaxed">
         {t(
           'admin.certs.info',
-          'По умолчанию сервер использует самоподписанный сертификат: почтовые клиенты и браузеры будут предупреждать о недоверенном сертификате. Для рабочей эксплуатации загрузите собственный сертификат (цепочка PEM и приватный ключ). Автоматический выпуск сертификатов Let’s Encrypt — в разработке.',
+          'MGate автоматически выпускает и продлевает TLS-сертификаты (Let\'s Encrypt / ZeroSSL) через фоновый ACME-клиент для хоста сервера и доменов. Также поддерживается загрузка собственных сертификатов.',
         )}
       </div>
 

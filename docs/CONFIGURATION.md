@@ -20,7 +20,7 @@ Swarm secrets).
 | Переменная | По умолчанию | Описание | Сервис(ы) |
 |---|---|---|---|
 | `MGATE_HOSTNAME` | — (обязательна) | FQDN сервера: цель MX, HELO/EHLO, хост админки/webmail/автонастройки | api, webmail, postfix, dovecot, traefik |
-| `MGATE_ADMIN_EMAIL` | — (обязательна) | Email первого суперадминистратора; на него пересылаются `postmaster@`/`abuse@` `MGATE_HOSTNAME`. Зарезервирован как контакт ACME-аккаунта для автоматического выпуска сертификатов (в разработке, см. [ACME / TLS](#acme--tls)) | migrate (bootstrap), api, postfix, dovecot |
+| `MGATE_ADMIN_EMAIL` | — (обязательна) | Email первого суперадминистратора; на него пересылаются `postmaster@`/`abuse@` `MGATE_HOSTNAME`. Контактный адрес ACME-аккаунта для выпуска сертификатов (см. [ACME / TLS](#acme--tls)) | migrate (bootstrap), api, worker, postfix, dovecot |
 | `MGATE_ADMIN_PASSWORD` | *(пусто)* | Пароль первого суперадминистратора; если пусто — пароль генерируется при первом запуске и **один раз** печатается в лог сервиса `migrate` (`docker compose logs migrate \| grep -A2 'initial superadmin'`). Сброс забытого пароля: `docker compose exec api mgate admin reset-password <email>` | migrate |
 | `TZ` | `UTC` | Часовой пояс контейнеров (логи, cron бэкапов) | все |
 | `MGATE_REGISTRY` | `ghcr.io/mgate-server` | Реестр образов (`<registry>/<service>:<version>`); публичный, скачивание без авторизации. Менять нужно только для собственного зеркала | compose |
@@ -28,7 +28,7 @@ Swarm secrets).
 | `MGATE_IMAGE` | `${MGATE_REGISTRY}/mgate` | Переопределяет полный образ бэкенда (без тега — тег всегда `:${MGATE_VERSION}`); нужен только для нестандартных сборок (например, собственное зеркало или локально собранный образ) | compose |
 | `MGATE_AGENT_IMAGE` | `${MGATE_REGISTRY}/mgate-agent:${MGATE_VERSION}` | Переопределяет полный образ (с тегом) агента, из которого `postfix`/`dovecot`/`firewall` копируют бинарник `mgate-agent` при сборке (`docker-compose.build.yml`, `COPY --from=`) | build |
 | `MGATE_BIND_ADDRESS` | `0.0.0.0` | Адрес прослушивания HTTP(S)/почтовых портов внутри контейнеров | api, webmail, postfix, dovecot, traefik |
-| `MGATE_HTTP_PORT` | `80` | Внешний порт HTTP (редирект на HTTPS; в будущем — ACME HTTP-01) | traefik |
+| `MGATE_HTTP_PORT` | `80` | Внешний порт HTTP (редирект на HTTPS и ACME HTTP-01 challenge) | traefik |
 | `MGATE_HTTPS_PORT` | `443` | Внешний порт HTTPS (админка, webmail, API) | traefik |
 | `MGATE_SMTP_PORT` | `25` | Публикуемый на хосте порт SMTP (внутри контейнера всегда 25) | postfix |
 | `MGATE_SUBMISSIONS_PORT` | `465` | Публикуемый порт SMTPS (wrapper-TLS, внутри контейнера 465) | postfix |
@@ -65,42 +65,29 @@ Swarm secrets).
 
 ## ACME / TLS
 
-> **Автоматический выпуск сертификатов (ACME: Let's Encrypt, ZeroSSL) в этой версии не
-> реализован — в разработке.** Переменные `MGATE_ACME_*` зарезервированы под эту функцию:
-> сейчас они ничего не выпускают и не продлевают, при любых значениях.
+Встроенный ACME-клиент обеспечивает автоматический заказ и продление TLS-сертификатов через Let's Encrypt или ZeroSSL для хоста сервера (`MGATE_HOSTNAME`) и почтовых доменов, а также поддерживает подтверждение владения через HTTP-01 или DNS-01.
 
-Как работает TLS в этой версии:
+Как работает TLS:
 
-- По умолчанию HTTPS (Traefik), SMTP (Postfix) и IMAP/POP3/ManageSieve (Dovecot) отдают
-  **самоподписанный сертификат** для `MGATE_HOSTNAME`, который почтовые контейнеры создают при
-  первом запуске в томе `certs` (`/certs/default`). Браузеры и почтовые клиенты показывают
-  предупреждение о недоверенном сертификате. Этот сертификат выпускается на **90 дней** и
-  автоматически не перевыпускается; после истечения срока клиенты, проверяющие сертификат (в том
-  числе встроенная веб-почта), перестают устанавливать с ним TLS-соединения.
-- Для рабочей эксплуатации загрузите **собственный сертификат** в админке: «Сертификаты» →
-  «Загрузить сертификат» — цепочка PEM (сертификат сервера первым, затем промежуточные) и
-  незашифрованный закрытый ключ PEM (PKCS#12 не принимается). Сертификат, покрывающий
-  `MGATE_HOSTNAME`, становится сертификатом по умолчанию для всех сервисов, обычно в течение
-  минуты и без перезапуска контейнеров.
-- Продление — тоже вручную: загрузите новый сертификат под тем же именем до истечения срока
-  прежнего. Получить сертификат можно любым ACME-клиентом на отдельной машине.
+- При старте с `MGATE_ACME_ENABLED=true` фоновый ACME-клиент автоматически заказывает сертификат у настроенного CA (`letsencrypt`, `zerossl` и др.). До завершения выпуска почтовые службы и Traefik используют bootstrap-сертификат из `/certs/default`, который автоматически заменяется на выпущенный ACME-сертификат без простоя и перезапуска контейнеров (Traefik dynamic file provider + reload почтовых демонов через mgate-agent).
+- Для рабочей эксплуатации также можно загрузить **собственный сертификат** в админке: «Сертификаты» → «Загрузить сертификат» — цепочка PEM (сертификат сервера первым, затем промежуточные) и незашифрованный закрытый ключ PEM.
+- Продление ACME-сертификатов выполняется автоматически фоновым воркером за 30 дней до окончания срока действия, а также доступно вручную в интерфейсе админки.
 
 Подробности — [`DEPLOYMENT.md`](DEPLOYMENT.md#4-tls-http-01-vs-dns-01-zerossl-eab).
 
 | Переменная | По умолчанию | Описание | Сервис(ы) |
 |---|---|---|---|
-| `MGATE_ACME_ENABLED` | `true` | Зарезервировано: включение автоматического выпуска/продления (в разработке). В этой версии сертификаты не выпускаются при любом значении | api, worker |
-| `MGATE_ACME_DIRECTORY` | `letsencrypt` | Зарезервировано: каталог ACME — `letsencrypt` \| `letsencrypt-staging` \| `zerossl` \| URL директории (в разработке) | api, worker |
-| `MGATE_ACME_CHALLENGE` | `http-01` | Зарезервировано: способ подтверждения домена — `http-01` \| `dns-01` (в разработке) | api, worker |
-| `MGATE_ACME_DNS_PROVIDER` | *(пусто)* | Зарезервировано: DNS-провайдер для `dns-01` (в разработке) | api, worker |
-| `MGATE_ACME_EAB_KID` | *(пусто)* | Зарезервировано: External Account Binding Key ID для ZeroSSL (в разработке) | api, worker |
-| `MGATE_ACME_EAB_HMAC` | *(пусто)* | Зарезервировано: External Account Binding HMAC key для ZeroSSL (в разработке) | api, worker |
+| `MGATE_ACME_ENABLED` | `true` | Включение автоматического выпуска и продления сертификатов через встроенный ACME-клиент | api, worker |
+| `MGATE_ACME_DIRECTORY` | `letsencrypt` | Каталог ACME — `letsencrypt` \| `letsencrypt-staging` \| `zerossl` \| URL директории | api, worker |
+| `MGATE_ACME_CHALLENGE` | `http-01` | Способ подтверждения домена — `http-01` \| `dns-01` | api, worker |
+| `MGATE_ACME_DNS_PROVIDER` | *(пусто)* | DNS-провайдер для `dns-01` (например, `cloudflare`) | api, worker |
+| `MGATE_ACME_EAB_KID` | *(пусто)* | External Account Binding Key ID для ZeroSSL | api, worker |
+| `MGATE_ACME_EAB_HMAC` | *(пусто)* | External Account Binding HMAC key для ZeroSSL | api, worker |
 
 ## Лицензирование
 
 | Переменная | По умолчанию | Описание | Сервис(ы) |
 |---|---|---|---|
-| `MGATE_LICENSE_SERVER` | `https://cloud.mgate.example` (плейсхолдер-домен) | Базовый URL сервера лицензий (что именно передаётся — см. [`LICENSING.md`](LICENSING.md)). Нужен только для активации Pro: Community работает без него. Адрес для активации вендор сообщает вместе с подпиской; пока указан плейсхолдер, попытки активации завершаются сетевой ошибкой | api, worker |
 
 ## Почта и лимиты
 
@@ -285,19 +272,19 @@ services:
   рантайм-конфигурации `.env` и здесь не описываются — см. комментарии в
   соответствующем `Dockerfile`.
 
-## Реестр образов, сервер лицензий и другие адреса, задаваемые конфигурацией
+## Реестр образов, сервер лицензий и другие адреса
 
-Ни один хост и ни имя реестра не зашиты в код образов, шаблоны Helm или compose-файлы — везде
-используются переменные окружения или значения чарта. Значения по умолчанию:
+Реестр образов и параметры инсталляции задаются переменными окружения или значениями чарта.
+Адрес сервера лицензий зафиксирован в коде backend и не настраивается через `.env`, TOML или Helm.
+Текущие значения:
 
 - реестр образов — `ghcr.io/mgate-server` (публичный, `linux/amd64`);
-- сервер лицензий — плейсхолдер из `.env.example` (`MGATE_LICENSE_SERVER`). Community работает
-  без него; адрес для активации Pro вендор сообщает вместе с подпиской — укажите его там же. Пока
-  указан плейсхолдер, попытки активации завершаются сетевой ошибкой;
+- сервер лицензий — `https://cloud.mgate.example` (плейсхолдер в коде backend). Community работает
+  без него; рабочий адрес поставляется в сборке backend. Пока используется плейсхолдер, попытки
+  активации завершаются сетевой ошибкой;
 - хост инсталляции и email администратора — всегда ваши собственные значения.
 
-Если вы видите буквальное имя реестра или хоста вендора внутри шаблона/кода (а не в
-`.env.example`, `values.yaml` или их комментариях/примерах команд), это дефект — заведите issue.
+Адрес сервера лицензий меняет вендор при сборке backend. Остальные адреса настраиваются ниже.
 
 Где менять:
 
@@ -307,11 +294,9 @@ services:
 | Образ backend | `.env` → `MGATE_IMAGE` (переопределяет `${MGATE_REGISTRY}/mgate`; тег берётся из `MGATE_VERSION`) | не задан (наследует `MGATE_REGISTRY`) | `registry.example-vendor.com/mgate/mgate` |
 | Образ агента | `.env` → `MGATE_AGENT_IMAGE` (переопределяет `${MGATE_REGISTRY}/mgate-agent:${MGATE_VERSION}`) | не задан (наследует `MGATE_REGISTRY`) | `registry.example-vendor.com/mgate/mgate-agent:2026.10.1` |
 | Версия образов | `.env` → `MGATE_VERSION` | см. выше | `2026.10.1` |
-| Сервер лицензий | `.env` → `MGATE_LICENSE_SERVER` | `https://cloud.mgate.example` (плейсхолдер из `.env.example`) | адрес, выданный вендором вместе с подпиской (без него Community работает, активация Pro завершается сетевой ошибкой) |
 | Хост инсталляции | `.env` → `MGATE_HOSTNAME` | не задан, оператор всегда указывает свой | `mail.example.org` |
 | Реестр образов (Helm) | `deploy/helm/mgate/values.yaml` → `global.imageRegistry` (или `--set global.imageRegistry=...`) | `ghcr.io/mgate-server` | `registry.example-vendor.com/mgate` |
 | Хост/email инсталляции (Helm) | `deploy/helm/mgate/values.yaml` → `config.hostname`, `config.adminEmail` | `mail.example.com`, `admin@example.com` | значения конкретного оператора |
-| Сервер лицензий (Helm) | `deploy/helm/mgate/values.yaml` → `config.licenseServer` | `https://cloud.mgate.example` | адрес, выданный вендором |
 | Ссылки в интерфейсе | `.env` → `MGATE_PRICING_URL`, `MGATE_VENDOR_PORTAL_URL` | пусто (ссылки скрыты) | URL ваших страниц |
 | Домены в примерах команд/README/DNS | `README.md`, `docs/DNS.md`, `docs/DEPLOYMENT.md` (`example.com`, `mail.example.com` и т.п.) | иллюстративные `example.com`-домены | ваш домен — подставляется по инструкции |
 

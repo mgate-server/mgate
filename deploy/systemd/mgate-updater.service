@@ -1,0 +1,17 @@
+[Unit]
+Description=MGate host updater
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/mgate-updater/updater.py --serve
+Restart=on-failure
+RestartSec=5
+UMask=0077
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

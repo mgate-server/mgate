@@ -11,6 +11,7 @@ interface BrandingInfo {
   product_name?: string;
   logo_url?: string | null;
   accent_color?: string | null;
+  favicon_url?: string | null;
 }
 
 export function TopBar({ title: _title }: { title: string }) {
@@ -35,7 +36,19 @@ export function TopBar({ title: _title }: { title: string }) {
     if (branding?.product_name) {
       document.title = branding.product_name;
     }
-  }, [branding?.product_name]);
+    if (branding?.accent_color) {
+      document.documentElement.style.setProperty('--mg-primary', branding.accent_color);
+    }
+    if (branding?.favicon_url) {
+      let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      link.href = branding.favicon_url;
+    }
+  }, [branding?.product_name, branding?.accent_color, branding?.favicon_url]);
 
   const isMail = location.pathname.startsWith('/mail');
   const isAdmin = location.pathname.startsWith('/admin');

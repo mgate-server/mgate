@@ -85,7 +85,6 @@ config:
   logLevel: info # trace|debug|info|warn|error
   logFormat: json # json|pretty
   messageSizeLimit: 52428800 # bytes, MGATE_MESSAGE_SIZE_LIMIT
-  licenseServer: "https://cloud.mgate.example" # MGATE_LICENSE_SERVER, placeholder domain
   # MGATE_BACKEND_SUBNET (Postfix `mynetworks` / Dovecot `login_trusted_networks` — an unauthenticated
   # relay/trust path for anything inside this CIDR, e.g. the worker role sending transactional mail
   # straight to postfix:25). Compose hardcodes its own small docker-bridge subnet here; Kubernetes

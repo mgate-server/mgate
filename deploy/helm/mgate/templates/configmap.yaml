@@ -19,7 +19,6 @@ data:
   # round numbers in scientific notation ("5.24288e+07" instead of "52428800"), silently breaking
   # every daemon that parses this as a byte count. Verified with `helm template` before this fix.
   MGATE_MESSAGE_SIZE_LIMIT: {{ .Values.config.messageSizeLimit | int | quote }}
-  MGATE_LICENSE_SERVER: {{ .Values.config.licenseServer | quote }}
   MGATE_ACME_ENABLED: {{ .Values.config.acme.enabled | quote }}
   MGATE_ACME_DIRECTORY: {{ .Values.config.acme.directory | quote }}
   MGATE_ACME_CHALLENGE: {{ .Values.config.acme.challenge | quote }}

@@ -1072,6 +1072,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read release metadata and durable operation state. */
+        get: operations["status"];
+        put?: never;
+        /** Confirm and start one pinned stable release; the host continues after API restart. */
+        post: operations["start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2152,6 +2170,34 @@ export interface components {
             name: string;
             /** @description Plain text (≤ 10 KiB). */
             text_body?: string | null;
+        };
+        /** @description Durable operation state; stages are shared with the host CLI. */
+        UpdateJob: {
+            actor: string;
+            backup_path?: string | null;
+            error?: string | null;
+            /** Format: int64 */
+            finished_at?: number | null;
+            from_version: string;
+            id: string;
+            migration_started: boolean;
+            stage: string;
+            /** Format: int64 */
+            started_at: number;
+            to_version: string;
+        };
+        /** @description Availability, pinned version, release metadata and the last operation. */
+        UpdateStatus: {
+            check_error?: string | null;
+            current_version: string;
+            job?: null | components["schemas"]["UpdateJob"];
+            latest_version?: string | null;
+            release_url?: string | null;
+            supported: boolean;
+        };
+        /** @description The version shown in the confirmation dialog, never an implicit `latest`. */
+        StartUpdate: {
+            version: string;
         };
     };
     responses: never;
@@ -7377,6 +7423,99 @@ export interface operations {
             };
             /** @description Missing or wrong bearer token */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    status: {
+        parameters: {
+            query?: {
+                /** @description Refresh release metadata */
+                refresh?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartUpdate"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateJob"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

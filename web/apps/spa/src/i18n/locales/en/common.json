@@ -239,7 +239,7 @@
       "name": "Certificate name",
       "source": "Source",
       "validity": "Valid until",
-      "empty": "No certificates found. Upload your own certificate: automatic Let’s Encrypt issuance is in development.",
+      "empty": "No certificates found. MGate automatically issues certificates for configured domains via ACME (Let’s Encrypt / ZeroSSL), or you can upload custom certificates.",
       "upload": "Upload certificate",
       "uploadTitle": "Upload custom SSL/TLS certificate",
       "domains": "Domains / SANs (comma separated)",
@@ -247,7 +247,7 @@
       "keyPem": "Private Key PEM",
       "renew": "Renew",
       "confirmDelete": "Delete certificate?",
-      "info": "By default the server uses a self-signed certificate: mail clients and browsers will warn about an untrusted certificate. For production use, upload your own certificate (PEM chain and private key). Automatic Let’s Encrypt issuance is in development.",
+      "info": "MGate automatically issues and renews TLS certificates (Let's Encrypt / ZeroSSL) via the background ACME client for the server host and domains. Custom certificate upload is also supported.",
       "nameOptional": "Name (optional)",
       "sourceUploaded": "Uploaded",
       "sourceSelfSigned": "Self-signed",
@@ -694,6 +694,37 @@
         "title": "Priority updates",
         "description": "Early access to new mgate releases before public Community release. In development."
       }
+    }
+  },
+  "updates": {
+    "title": "Updates",
+    "current": "Installed version",
+    "latest": "Latest stable version",
+    "releaseNotes": "Release notes",
+    "unsupported": "Updates from this panel require Docker Compose and the host updater service. See docs/UPDATES.md.",
+    "backup": "Backup",
+    "recovery": "Manual inspection and recovery are required. Updates are blocked; see docs/UPDATES.md.",
+    "reload": "Reload interface",
+    "reconnecting": "Waiting for the server to reconnect. Status checks will resume automatically.",
+    "requestUncertain": "If the response was lost during a restart, check the operation status before trying again.",
+    "check": "Check for updates",
+    "update": "Update",
+    "confirmTitle": "Update MGate",
+    "confirmText": "Update to {{version}}? The database and settings will be backed up, then services will restart. The panel and mail will be temporarily unavailable.",
+    "confirm": "Back up and update",
+    "stages": {
+      "checking": "Checking installation",
+      "downloading": "Downloading release and images",
+      "backup": "Creating backup",
+      "installing": "Updating files",
+      "migrating": "Migrating database",
+      "starting": "Starting services",
+      "verifying": "Checking readiness",
+      "succeeded": "Update completed",
+      "failed": "Update failed",
+      "interrupted": "Update interrupted",
+      "recovery_required": "Recovery required",
+      "recovered": "Manual recovery confirmed"
     }
   }
 }

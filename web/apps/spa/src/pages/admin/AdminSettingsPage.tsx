@@ -21,6 +21,7 @@ import { useEntitlements } from '../../lib/entitlements';
 import { fetchApi } from '../../lib/apiClient';
 import { readApiError } from '../../lib/apiError';
 import { getRuntimeLinks } from '../../lib/runtimeConfig';
+import { UpdatesTab } from './UpdatesTab';
 
 interface GlobalSettings {
   server_name?: string;
@@ -53,7 +54,9 @@ const PRESET_COLORS = [
 export function AdminSettingsPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') === 'white-label' ? 'white-label' : 'general';
+  const requestedTab = searchParams.get('tab');
+  const activeTab =
+    requestedTab === 'white-label' || requestedTab === 'updates' ? requestedTab : 'general';
 
   const { data: settings, isLoading } = useQuery<GlobalSettings>({
     queryKey: ['admin', 'settings'],
@@ -67,6 +70,7 @@ export function AdminSettingsPage() {
   const tabs: TabItem[] = [
     { value: 'general', label: t('admin.settings.tabs.general', 'Основные параметры') },
     { value: 'white-label', label: t('admin.settings.tabs.branding', 'White-Label') },
+    { value: 'updates', label: t('updates.title') },
   ];
 
   return (
@@ -93,6 +97,7 @@ export function AdminSettingsPage() {
       )}
 
       {activeTab === 'white-label' && <WhiteLabelSettingsTab />}
+      {activeTab === 'updates' && <UpdatesTab />}
     </div>
   );
 }

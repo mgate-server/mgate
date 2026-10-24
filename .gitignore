@@ -38,3 +38,9 @@ npm-debug.log*
 # Python (tests/e2e, tests/load, tests/deliverability)
 __pycache__/
 *.pyc
+
+# Local installer completion marker.
+.mgate-installed-domain
+
+# Host updater socket, operation state and pre-update backups.
+/.mgate-updater/

@@ -50,7 +50,7 @@ flowchart LR
   subgraph internet["Интернет"]
     Peers["Внешние MTA / DNS-резолверы"]
     Browser["Браузер: админ / пользователь"]
-    CloudLic["Сервер лицензий вендора (MGATE_LICENSE_SERVER)"]
+    CloudLic["Сервер лицензий вендора (https://cloud.mgate.example)"]
   end
 
   subgraph netpublic["сеть public: bridge, egress разрешён"]
@@ -194,7 +194,7 @@ flowchart LR
 | api / webmail / worker | valkey :6379 db0 | Redis-протокол | rate limit, стрим логов, IP-баны (веб-сессии хранятся в PostgreSQL) |
 | api (модуль ACME внутри бэкенда) | valkey :6379 db0 | Redis-протокол | `mgate:acme:http01:<token>` (TTL 1ч) — ответ на ACME HTTP-01 challenge, читается любой репликой `api` |
 | api / worker / postfix / dovecot (через `mgate-agent`) | unbound :53 | DNS | резолвинг с DNSSEC-валидацией |
-| worker (и api при активации) | `${MGATE_LICENSE_SERVER}` (внешний сервер лицензий вендора) | HTTPS | активация/продление лицензии (что передаётся — `docs/LICENSING.md` §5) |
+| worker (и api при активации) | `https://cloud.mgate.example` (внешний сервер лицензий вендора) | HTTPS | активация/продление лицензии (что передаётся — `docs/LICENSING.md` §5) |
 | mgate-agent (postfix/dovecot) | api :8081 `/internal/v1/events/dovecot` | HTTP | события dovecot (опционально, наряду с rspamd `metadata_exporter`) |
 | backup | postgres, `/backups` | `pg_dump`, restic | резервное копирование |
 | firewall (`mgate-agent --role firewall`) | valkey pubsub `mgate:bans:events` | Redis-протокол | обновление набора nftables `mgate_ban` |
@@ -447,7 +447,7 @@ sequenceDiagram
   participant Admin as Admin SPA
   participant API as api
   participant Worker as worker
-  participant Cloud as Сервер лицензий вендора (MGATE_LICENSE_SERVER)
+  participant Cloud as Сервер лицензий вендора (https://cloud.mgate.example)
 
   Admin->>API: «Перейти на Pro»
   API->>Cloud: запрос активации (HTTPS)
@@ -644,7 +644,7 @@ Dev-прокси Vite: `/api` → `http://127.0.0.1:8080` (api), `/api/v1/mail` 
 | `valkey` недоступна | Приём и выдача почты по SQL-путям продолжаются; веб-сессии и вход в веб-интерфейс (сессии лежат в PostgreSQL) | Rate limiting (открывает риск открытого рестрикта, но не открытого релея — блокировки на уровне Rspamd/DNSBL остаются), DKIM/ARC-подпись (ключи читаются из Valkey rspamd'ом — без неё подпись невозможна, что означает мягкую деградацию доставляемости, а не потерю почты), IP-баны firewall | Rspamd деградирует без Valkey — это единственный путь, где отказ Valkey напрямую бьёт по доставляемости исходящей почты |
 | `rspamd` недоступен | Входящая почта на порт 25 принимается без проверки (`milter_default_action = accept` в `main.cf` — письма не теряются) | Отправка через submission (465/587) временно отклоняется (`milter_default_action=tempfail` в `master.cf`), чтобы не уходила почта без DKIM-подписи и антиспам-проверки; входящая почта на время отказа не фильтруется | Осознанный выбор: для входящей почты приоритет — не потерять письма, для исходящей — не отправить неподписанное/непроверенное (см. `docs/mail/postfix.md`) |
 | `unbound` недоступен | Docker embedded DNS резолвит имена сервисов | DNSSEC-валидируемый внешний DNS (SPF/DMARC lookups, ACME DNS-01, DNSBL) | `unbound` — единственный путь наружу с DNSSEC; нет автоматического fallback на публичный DNS без валидации (сознательно — иначе теряется защита от DNS spoofing) |
-| Сервер лицензий вендора (`MGATE_LICENSE_SERVER`) недоступен | Полная работа почтового сервера продолжается на действующем лизе (`ProOffline`) | Новые активации; через 72 ч без связи → `CommunityDegraded` (затрагивает только домены сверх лимита и только после ещё 7 дней отсрочки, не всю почту) | Продуктовое правило: при потере связи с сервером лицензий установка откатывается к правам Community с отсрочкой ([ADR 0015](adr/0015-degraded-mode-policy.md), `docs/LICENSING.md` §6) и никогда не «роняет» весь сервер |
+| Сервер лицензий вендора (`https://cloud.mgate.example`) недоступен | Полная работа почтового сервера продолжается на действующем лизе (`ProOffline`) | Новые активации; через 72 ч без связи → `CommunityDegraded` (затрагивает только домены сверх лимита и только после ещё 7 дней отсрочки, не всю почту) | Продуктовое правило: при потере связи с сервером лицензий установка откатывается к правам Community с отсрочкой ([ADR 0015](adr/0015-degraded-mode-policy.md), `docs/LICENSING.md` §6) и никогда не «роняет» весь сервер |
 
 Общий принцип: почтовый транспортный путь (SMTP-приём, LMTP-доставка, IMAP-чтение уже
 аутентифицированных сессий) деградирует последним; отказывают в первую очередь UI/API
